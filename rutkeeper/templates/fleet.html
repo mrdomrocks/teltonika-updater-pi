@@ -40,7 +40,6 @@
         <th>Firmware</th>
         <th>Stable channel</th>
         <th>Last backup</th>
-        <th>Schedule</th>
       </tr>
     </thead>
     <tbody>
@@ -72,16 +71,6 @@
           {% endif %}
         </td>
         <td data-label="Last backup">{{ device.last_backup_at|when }}</td>
-        <td data-label="Schedule">
-          {% if device.schedule_enabled %}
-          <span>In the window</span>
-          {% else %}
-          <span class="muted">Left out</span>
-          {% endif %}
-          {% if device.auto_apply %}
-          <span class="sub">Auto-apply on</span>
-          {% endif %}
-        </td>
       </tr>
       {% endfor %}
     </tbody>

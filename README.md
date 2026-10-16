@@ -16,7 +16,7 @@ The dashboard listens on port **8741**.
 
 Rutkeeper cannot sign in with no password at all. The password already on the unit is required for that one login. It is held in memory for the job and then discarded.
 
-The fleet, schedule, and RMS pages are still there for routers you manage in place rather than on the bench.
+The fleet and RMS pages are still there for routers you manage in place rather than on the bench.
 
 ## What the search is actually describing
 
@@ -33,16 +33,15 @@ Someone wanted a RUTM10 to look for a new **stable** firmware on the first Monda
 
 Config rollout is separate. A backup applies only to routers with the same product code, and only when their firmware is the same or newer than the firmware the backup was taken on. RMS can push one backup to many devices. On RutOS 7.22 and later there are two backup types; Teltonika R&D has recommended the older **device backup** while the newer configuration backup is still incomplete.
 
-Rutkeeper keeps that sequence on the Pi instead of a crontab and an API token on every router.
+Rutkeeper keeps that sequence on the Pi, started from the bench or a router page, instead of a crontab and an API token on every router.
 
 ## What it does
 
 - Talks to RutOS 7.06 or newer on the LAN: `POST /api/login`, then the firmware and backup endpoints above.
 - Saves backups on the Pi, with product code, firmware version, and a SHA-256.
 - Pushes a backup only when the product code matches and the file is not from a newer firmware.
-- Installs stable firmware only. A manual install asks you to confirm and takes a backup first. The monthly job installs only when **both** the site is armed and that router has auto-apply on.
-- Default window: first Monday at 04:00, on the Pi’s clock. If the Pi is off, that window is skipped.
-- Optional RMS path: the same task-group call support published, fired from the Pi. Use it for routers you cannot reach on the LAN. Do not schedule the same router both ways.
+- Installs stable firmware only. A manual install asks you to confirm and takes a backup first.
+- Optional RMS path: the same task-group call support published, fired from the Pi when you run it. Use it for routers you cannot reach on the LAN.
 
 Three simulated routers are loaded on first start so the screens are visible before any hardware is added. Remove them from the fleet page when you add real ones.
 

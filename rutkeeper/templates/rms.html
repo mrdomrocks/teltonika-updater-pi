@@ -34,10 +34,6 @@
         <input name="task_ids" value="{{ settings.rms_task_ids }}" placeholder="101, 102, 103, 104" spellcheck="false">
       </label>
       <label class="check">
-        <input type="checkbox" name="rms_in_schedule" value="1" {% if settings.rms_in_schedule == "1" %}checked{% endif %}>
-        Also fire this group in the scheduled window, only while updates are armed
-      </label>
-      <label class="check">
         <input type="checkbox" name="confirm" value="1">
         Run the group now. This can install firmware on those RMS devices.
       </label>
@@ -48,7 +44,7 @@
       <button class="btn quiet" type="submit" name="action" value="tasks">Fetch tasks</button>
       <button class="btn danger" type="submit" name="action" value="run">Run task group</button>
     </div>
-    <p class="hint">Create the token under RMS account settings → API → Access tokens. The group id is the last part of the task group URL. Task ids change if you edit the group. Do not also schedule the same routers over the LAN, or they can update twice.</p>
+    <p class="hint">Create the token under RMS account settings → API → Access tokens. The group id is the last part of the task group URL. Task ids change if you edit the group. Run the group from here when you want it to go out.</p>
   </form>
   <section class="card">
     <h2>Request the Pi will send</h2>

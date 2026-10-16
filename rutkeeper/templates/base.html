@@ -12,28 +12,22 @@
 </head>
 <body>
   <div class="shell">
-    <aside class="rail">
+    <header class="rail">
       <a class="brand" href="/">
         <span class="brand-mark">Rutkeeper</span>
+        {% if site_name and site_name != "Rutkeeper" %}
         <span class="brand-site">{{ site_name }}</span>
+        {% endif %}
       </a>
-      <p class="clock" data-epoch="{{ now_epoch }}"><span id="clock">{{ now_label }}</span> <span class="muted">{{ zone_label }}</span></p>
-      {% if armed %}
-      <p class="arm arm-on">Updates armed</p>
-      {% else %}
-      <p class="arm">Updates disarmed</p>
-      {% endif %}
       <nav class="nav">
         <a href="/" {% if path == "/" %}aria-current="page"{% endif %}>Bench</a>
         <a href="/fleet" {% if path == "/fleet" %}aria-current="page"{% endif %}>Fleet</a>
         <a href="/backups" {% if path.startswith("/backups") %}aria-current="page"{% endif %}>Backups</a>
-        <a href="/schedule" {% if path == "/schedule" %}aria-current="page"{% endif %}>Schedule</a>
         <a href="/rms" {% if path == "/rms" %}aria-current="page"{% endif %}>RMS</a>
         <a href="/log" {% if path == "/log" %}aria-current="page"{% endif %}>Log</a>
       </nav>
-      <p class="rail-note">Plug in one RUT. One install writes the firmware, applies the config you picked, and sets the shared password.</p>
       <p class="rail-version">{{ version }}</p>
-    </aside>
+    </header>
     <main class="main">
       {% if notice %}
       <p class="notice" role="status">{{ notice }}</p>

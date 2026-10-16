@@ -6,10 +6,9 @@ import json
 import os
 import secrets
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
-from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -18,7 +17,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from rutkeeper import __version__
 from rutkeeper.crypto import SecretBox
 from rutkeeper.db import DB
-from rutkeeper.firmware import backup_compatibility, human_size, schedule_due
+from rutkeeper.firmware import backup_compatibility, human_size
 from rutkeeper.rms import parse_id_list, summarize_devices, task_group_body
 from rutkeeper.rms import RmsClient, RmsError
 from rutkeeper.rutos import RutosError, api_base
@@ -33,14 +32,6 @@ BUSY_LABELS = {
     "update": "Installing firmware",
     "push": "Applying configuration",
 }
-WHEN_LABELS = {
-    "first_monday": "First Monday of the month",
-    "mondays": "Every Monday",
-    "daily": "Every day",
-    "manual": "Manual only",
-}
-
-
 def default_data_dir() -> Path:
     env = os.environ.get("RUTKEEPER_DATA")
     if env:
@@ -58,26 +49,6 @@ def format_local(value: object) -> str:
     if stamp.tzinfo is None:
         stamp = stamp.replace(tzinfo=timezone.utc)
     return stamp.astimezone().strftime("%d %b %Y %H:%M")
-
-
-def next_window(settings: dict, now: datetime) -> str:
-    mode = settings.get("when") or "manual"
-    if mode == "manual":
-        return "Nothing is scheduled."
-    try:
-        hour = int(settings.get("hour") or 4)
-        minute = int(settings.get("minute") or 0)
-    except ValueError:
-        hour, minute = 4, 0
-    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if candidate <= now:
-        candidate += timedelta(days=1)
-    for _ in range(370):
-        if schedule_due(candidate, mode, hour, minute):
-            zone = candidate.tzname() or "local"
-            return candidate.strftime("%A %d %b %Y %H:%M ") + zone
-        candidate += timedelta(days=1)
-    return "No upcoming window."
 
 
 def pretty_json(text: str) -> str:
@@ -99,7 +70,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     runner = Runner(db, box, data / "backups")
     runner.demo_delay = float(os.environ.get("RUTKEEPER_DEMO_DELAY", "0.5"))
     bench = Bench(db, box, data / "bench")
-    schedule = os.environ.get("RUTKEEPER_DISABLE_SCHEDULER") != "1"
+    watch = os.environ.get("RUTKEEPER_DISABLE_SCHEDULER") != "1"
 
     env = Environment(
         loader=FileSystemLoader(PACKAGE / "templates"),
@@ -110,17 +81,10 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        scheduler = None
-        if schedule:
-            scheduler = BackgroundScheduler()
-            scheduler.add_job(runner.tick, "cron", id="rutkeeper-tick", misfire_grace_time=30)
-            scheduler.start()
-            runner.tick()
+        if watch:
             bench.start()
         yield
         bench.stop()
-        if scheduler is not None:
-            scheduler.shutdown(wait=False)
         db.close()
 
     app = FastAPI(title="Rutkeeper", docs_url=None, redoc_url=None, lifespan=lifespan)
@@ -137,12 +101,10 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             csrf=request.state.csrf,
             settings=settings,
             site_name=settings.get("site_name") or "Rutkeeper",
-            armed=settings.get("armed") == "1",
             notice=request.query_params.get("notice", ""),
             version=__version__,
             any_busy=db.any_busy(),
             busy_labels=BUSY_LABELS,
-            when_labels=WHEN_LABELS,
             now_label=now.strftime("%H:%M"),
             zone_label=now.tzname() or "local",
             now_epoch=int(now.timestamp() * 1000),
@@ -503,52 +465,6 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             raise HTTPException(404, "Backup file is missing.")
         return FileResponse(path, filename=row["filename"], media_type="application/octet-stream")
 
-    @app.get("/schedule")
-    def schedule_page(request: Request) -> HTMLResponse:
-        settings = db.settings()
-        now = datetime.now().astimezone()
-        return render(
-            request,
-            "schedule.html",
-            error="",
-            upcoming=next_window(settings, now),
-        )
-
-    @app.post("/schedule")
-    async def save_schedule(request: Request):
-        form = await posted(request)
-        when = str(form.get("when") or "manual")
-        if when not in WHEN_LABELS:
-            when = "manual"
-        try:
-            hour = int(form.get("hour") or 4)
-            minute = int(form.get("minute") or 0)
-        except ValueError:
-            hour, minute = -1, -1
-        site = str(form.get("site_name") or "Rutkeeper").strip()[:60] or "Rutkeeper"
-        kind = str(form.get("backup_kind") or "device")
-        if kind not in {"device", "configuration"}:
-            kind = "device"
-        if not (0 <= hour <= 23 and 0 <= minute <= 59):
-            return render(request, "schedule.html", error="Use an hour from 0 to 23 and a minute from 0 to 59.", upcoming="", status=400)
-        db.set_settings(
-            {
-                "site_name": site,
-                "when": when,
-                "hour": str(hour),
-                "minute": str(minute),
-                "armed": "1" if form.get("armed") else "0",
-                "backup_kind": kind,
-            }
-        )
-        db.add_event(
-            "info",
-            "schedule",
-            f"Schedule saved. {WHEN_LABELS[when]} at {hour:02d}:{minute:02d}. "
-            + ("Updates are armed." if form.get("armed") else "Updates are disarmed."),
-        )
-        return redirect("/schedule", "Schedule saved.")
-
     @app.get("/rms")
     def rms_page(request: Request) -> HTMLResponse:
         return render(request, "rms.html", error="", result="", tasks="", preview=_rms_preview(db))
@@ -692,9 +608,9 @@ def _device_fields(form, box: SecretBox, existing: dict | None) -> tuple[dict, s
         "host": host,
         "username": username[:80],
         "verify_tls": 1 if form.get("verify_tls") else 0,
-        "auto_apply": 1 if form.get("auto_apply") else 0,
+        "auto_apply": int((existing or {}).get("auto_apply") or 0),
         "keep_settings": 1 if form.get("keep_settings") else 0,
-        "schedule_enabled": 1 if form.get("schedule_enabled") else 0,
+        "schedule_enabled": int((existing or {}).get("schedule_enabled") or 0),
         "is_demo": 1 if is_demo else 0,
         "notes": str(form.get("notes") or "")[:500],
     }
@@ -722,7 +638,7 @@ def _save_rms(form, db: DB, box: SecretBox) -> str:
         "rms_group_id": group,
         "rms_device_ids": str(form.get("device_ids") or "").strip(),
         "rms_task_ids": str(form.get("task_ids") or "").strip(),
-        "rms_in_schedule": "1" if form.get("rms_in_schedule") else "0",
+        "rms_in_schedule": "0",
     }
     if form.get("clear_token"):
         values["rms_token_enc"] = ""

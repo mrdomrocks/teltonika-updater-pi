@@ -21,14 +21,6 @@
     <input type="checkbox" name="keep_settings" value="1" {% if device.keep_settings %}checked{% endif %}>
     Keep settings if firmware is installed
   </label>
-  <label class="check">
-    <input type="checkbox" name="schedule_enabled" value="1" {% if device.schedule_enabled %}checked{% endif %}>
-    Include in the scheduled window
-  </label>
-  <label class="check">
-    <input type="checkbox" name="auto_apply" value="1" {% if device.auto_apply %}checked{% endif %}>
-    Allow the schedule to install a stable update on this router
-  </label>
   {% if creating|default(false) %}
   <label class="check">
     <input type="checkbox" name="check_after" value="1" checked>

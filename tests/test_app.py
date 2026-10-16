@@ -127,12 +127,10 @@ def test_manual_update_from_the_form_requires_confirmation(client):
     assert client.app.state.db.device(yard["id"])["firmware"] == "RUTX_R_00.07.17.3"
 
 
-def test_schedule_page_names_the_teltonika_sequence(client):
+def test_schedule_page_is_gone(client):
     page = client.get("/schedule")
-    assert page.status_code == 200
-    assert "/firmware/actions/fota_download" in page.text
-    assert "keep_settings" in page.text
-    assert "First Monday" in page.text
+    assert page.status_code == 404
+    assert "Schedule" not in client.get("/").text
 
 
 def test_rms_preview_matches_the_support_script(client):

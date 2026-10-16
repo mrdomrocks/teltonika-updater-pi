@@ -22,6 +22,8 @@ from rutkeeper.firmware import backup_compatibility, human_size, schedule_due
 from rutkeeper.rms import parse_id_list, summarize_devices, task_group_body
 from rutkeeper.rms import RmsClient, RmsError
 from rutkeeper.rutos import RutosError, api_base
+from rutkeeper.bench import Bench, connect_host
+from rutkeeper.bench import Busy as BenchBusy
 from rutkeeper.worker import Busy, Runner
 
 PACKAGE = Path(__file__).resolve().parent
@@ -96,6 +98,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     box = SecretBox(data / "secret.key")
     runner = Runner(db, box, data / "backups")
     runner.demo_delay = float(os.environ.get("RUTKEEPER_DEMO_DELAY", "0.5"))
+    bench = Bench(db, box, data / "bench")
     schedule = os.environ.get("RUTKEEPER_DISABLE_SCHEDULER") != "1"
 
     env = Environment(
@@ -113,7 +116,9 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             scheduler.add_job(runner.tick, "cron", id="rutkeeper-tick", misfire_grace_time=30)
             scheduler.start()
             runner.tick()
+            bench.start()
         yield
+        bench.stop()
         if scheduler is not None:
             scheduler.shutdown(wait=False)
         db.close()
@@ -121,6 +126,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     app = FastAPI(title="Rutkeeper", docs_url=None, redoc_url=None, lifespan=lifespan)
     app.state.db = db
     app.state.runner = runner
+    app.state.bench = bench
     app.state.secrets = box
     app.mount("/static", StaticFiles(directory=PACKAGE / "static"), name="static")
 
@@ -178,6 +184,57 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         return JSONResponse({"ok": True, "version": __version__, "devices": len(db.devices())})
 
     @app.get("/")
+    def bench_page(request: Request) -> HTMLResponse:
+        return render(request, "bench.html", bench=bench.snapshot())
+
+    @app.get("/bench/status")
+    def bench_status() -> JSONResponse:
+        return JSONResponse(bench.snapshot())
+
+    @app.post("/bench/setup")
+    async def bench_setup(request: Request):
+        form = await posted(request)
+        try:
+            host = connect_host(str(form.get("host") or "192.168.1.1"))
+        except RutosError as exc:
+            return redirect("/", str(exc))
+        bench.save_setup(
+            host,
+            str(form.get("username") or "admin"),
+            str(form.get("target_password") or ""),
+            bool(form.get("simulate")),
+        )
+        db.add_event("info", "bench", "Bench setup saved.")
+        return redirect("/", "Bench setup saved.")
+
+    @app.post("/bench/file")
+    async def bench_file(request: Request):
+        form = await posted(request)
+        slot = str(form.get("slot") or "")
+        upload = form.get("file")
+        filename = getattr(upload, "filename", "") or ""
+        content = await upload.read() if upload is not None and hasattr(upload, "read") else b""
+        try:
+            bench.store_file(slot, filename, content)
+            if slot in {"config1", "config2"} and str(form.get("inside_password") or ""):
+                bench.save_config_password(slot, str(form.get("inside_password") or ""))
+        except RutosError as exc:
+            return redirect("/", str(exc))
+        return redirect("/", "File stored on this Pi.")
+
+    @app.post("/bench/run")
+    async def bench_run(request: Request):
+        form = await posted(request)
+        action = str(form.get("action") or "")
+        if action not in {"firmware", "config1", "config2"}:
+            return redirect("/", "Choose firmware or a config.")
+        try:
+            bench.start_job(action, str(form.get("current_password") or ""))
+        except BenchBusy:
+            return redirect("/", "The bench is already working on this router.")
+        return redirect("/", "Job started.")
+
+    @app.get("/fleet")
     def fleet(request: Request) -> HTMLResponse:
         devices = db.devices()
         return render(
@@ -192,7 +249,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         await posted(request)
         db.delete_demos()
         db.add_event("info", "fleet", "Removed the simulated routers.")
-        return redirect("/", "Simulated routers removed.")
+        return redirect("/fleet", "Simulated routers removed.")
 
     @app.get("/devices/new")
     def new_device(request: Request) -> HTMLResponse:
@@ -282,7 +339,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         await posted(request)
         db.delete_device(device_id)
         db.add_event("info", "fleet", f"Removed {device['name']}.")
-        return redirect("/", "Router removed.")
+        return redirect("/fleet", "Router removed.")
 
     @app.post("/devices/{device_id}/check")
     async def check_device(request: Request, device_id: int) -> RedirectResponse:

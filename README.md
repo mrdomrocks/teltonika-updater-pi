@@ -1,8 +1,23 @@
 # Rutkeeper
 
-Rutkeeper is a small appliance for a Raspberry Pi. It checks Teltonika routers for a stable firmware package, stores device backups on the Pi, and can push a known-good config or install that firmware. Unattended installs stay off until you arm them.
+Rutkeeper is a bench for a Raspberry Pi. Plug in one Teltonika RUT, and the Pi pings it until the router answers. The firmware image and two config files stay on the Pi. One click flashes the firmware. When the router is back, one click applies Config 1 or Config 2, then sets the admin password to a single password you chose.
 
 The dashboard listens on port **8741**.
+
+## Bench
+
+1. Open the Bench page and set the router address. A RUT on the cable is usually `192.168.1.1`. Give the Pi an address on that subnet that is not `.1`.
+2. Store the firmware file, Config 1, and Config 2.
+3. Set the password every router should end up with.
+4. If a config file contains its own admin password, type that password next to the file. Rutkeeper needs it to sign back in after the file is applied, then it overwrites it.
+5. Plug the router in. The page pings every couple of seconds. When the router answers, the status turns ready, the tab beeps, and a browser alert fires if you allowed alerts.
+6. Type the password that is on **this** router right now (the label, or the factory default `admin01`). That value is not saved.
+7. Flash firmware. The Pi uploads the file with `/firmware/actions/upload_device_firmware` and installs it with settings kept, so the same password still works after the reboot.
+8. When the router answers again, apply Config 1 or Config 2. After it comes back, the admin password is changed to the shared one. The password that was on the router, and the one inside the config, are not written to disk.
+
+Rutkeeper cannot sign in with no password at all. The password already on the unit is required for that one login. It is held in memory for the job and then discarded.
+
+The fleet, schedule, and RMS pages are still there for routers you manage in place rather than on the bench.
 
 ## What the search is actually describing
 

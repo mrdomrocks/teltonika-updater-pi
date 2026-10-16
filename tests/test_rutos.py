@@ -29,6 +29,26 @@ def test_login_and_firmware_status():
     assert payload["data"]["stable_version"] == "newest"
 
 
+def test_firmware_upload_uses_the_local_file_endpoint():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/login":
+            return httpx.Response(200, json={"data": {"token": "abc"}})
+        if request.url.path == "/api/firmware/actions/upload_device_firmware":
+            seen["upload"] = request.content
+            return httpx.Response(200, json={"success": True})
+        if request.url.path == "/api/firmware/actions/upgrade":
+            return httpx.Response(200, json={"success": True, "data": {"keep_settings": 1}})
+        return httpx.Response(404, json={"success": False})
+
+    transport = httpx.MockTransport(handler)
+    with RutosClient("192.168.1.1", "admin", "secret", transport=transport) as client:
+        client.upload_firmware("rut.bin", b"image-bytes")
+        client.upgrade_staged()
+    assert b"image-bytes" in seen["upload"]
+
+
 def test_backup_download_accepts_a_file_body():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/login":

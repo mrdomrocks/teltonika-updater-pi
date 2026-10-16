@@ -192,6 +192,79 @@ class RutosClient:
 
         return self.post_json("/firmware/actions/upgrade", upgrade_body(keep_settings))
 
+    def upload_firmware(self, filename: str, content: bytes) -> dict:
+        """Stage a firmware image that is already stored on the Pi."""
+        last: RutosError | None = None
+        for path in ("/firmware/actions/upload_device_firmware", "/firmware/actions/upload"):
+            try:
+                response = self.request(
+                    "POST",
+                    path,
+                    files={"file": (filename, content, "application/octet-stream")},
+                    timeout=300,
+                )
+            except RutosError as exc:
+                last = exc
+                continue
+            if response.status_code == 404:
+                last = RutosError("This firmware has no local upload endpoint.", status=404)
+                continue
+            return self._json_or_error(response, "Firmware upload failed")
+        raise last or RutosError("Firmware upload failed.")
+
+    def upgrade_staged(self) -> dict:
+        """Install the image just uploaded. Settings are kept so we can sign in again."""
+        try:
+            return self.upgrade(True)
+        except RutosError:
+            return self.post_json(
+                "/firmware/actions/upgrade",
+                {"data": {"keep_settings": "1", "suppress_validation": "1"}},
+            )
+
+    def set_admin_password(self, current: str, new: str) -> str:
+        """Replace the admin password. Tries the first-login action, then the users API."""
+        errors: list[str] = []
+        first_bodies = (
+            {"data": {"current_password": current, "password": new, "password_confirm": new}},
+            {"data": {"password": new, "password_confirm": new}},
+        )
+        for body in first_bodies:
+            try:
+                self.post_json("/system/actions/change_password_firstlogin", body)
+                return "first login"
+            except RutosError as exc:
+                errors.append(str(exc))
+        user_id = "login1"
+        try:
+            payload = self.get_json("/users/config")
+            rows = payload.get("data")
+            if isinstance(rows, list):
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    if str(row.get("username", "")).lower() == "admin" and row.get("id"):
+                        user_id = str(row["id"])
+                        break
+        except RutosError as exc:
+            errors.append(str(exc))
+        put_body = {
+            "data": {
+                "current_password": current,
+                "password": new,
+                "password_confirm": new,
+                ".type": "login",
+            }
+        }
+        try:
+            response = self.request("PUT", f"/users/config/{user_id}", json=put_body)
+            self._json_or_error(response, "Password change failed")
+            return f"users/{user_id}"
+        except RutosError as exc:
+            errors.append(str(exc))
+        detail = errors[-1] if errors else "The router did not accept a password change."
+        raise RutosError(detail)
+
     def download_backup(self, kind: str = "device") -> tuple[bytes, str]:
         attempts: list[dict] = []
         if kind == "configuration":

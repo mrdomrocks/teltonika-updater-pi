@@ -28,6 +28,15 @@ DEFAULTS = {
     "rms_in_schedule": "0",
     "last_slot": "",
     "missed_note": "",
+    "bench_host": "192.168.1.1",
+    "bench_username": "admin",
+    "bench_simulate": "0",
+    "bench_target_password_enc": "",
+    "bench_firmware_name": "",
+    "bench_config1_name": "",
+    "bench_config2_name": "",
+    "bench_config1_password_enc": "",
+    "bench_config2_password_enc": "",
 }
 
 

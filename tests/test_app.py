@@ -11,7 +11,7 @@ def _csrf(page) -> str:
 
 
 def test_fleet_shows_simulated_routers(client):
-    page = client.get("/")
+    page = client.get("/fleet")
     assert page.status_code == 200
     assert "North gate" in page.text
     assert "Yard pump" in page.text
@@ -118,7 +118,7 @@ def test_config_push_is_blocked_when_product_codes_differ(client):
 
 
 def test_manual_update_from_the_form_requires_confirmation(client):
-    page = client.get("/")
+    page = client.get("/fleet")
     token = _csrf(page)
     yard = next(device for device in client.app.state.db.devices() if device["name"] == "Yard pump")
     response = client.post(f"/devices/{yard['id']}/update", data={"csrf": token}, follow_redirects=False)

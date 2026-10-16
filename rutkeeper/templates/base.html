@@ -24,13 +24,14 @@
       <p class="arm">Updates disarmed</p>
       {% endif %}
       <nav class="nav">
-        <a href="/" {% if path == "/" %}aria-current="page"{% endif %}>Fleet</a>
+        <a href="/" {% if path == "/" %}aria-current="page"{% endif %}>Bench</a>
+        <a href="/fleet" {% if path == "/fleet" %}aria-current="page"{% endif %}>Fleet</a>
         <a href="/backups" {% if path.startswith("/backups") %}aria-current="page"{% endif %}>Backups</a>
         <a href="/schedule" {% if path == "/schedule" %}aria-current="page"{% endif %}>Schedule</a>
         <a href="/rms" {% if path == "/rms" %}aria-current="page"{% endif %}>RMS</a>
         <a href="/log" {% if path == "/log" %}aria-current="page"{% endif %}>Log</a>
       </nav>
-      <p class="rail-note">Stable channel only. A backup lands on this Pi before an install. Teltonika does not recommend leaving upgrades unattended.</p>
+      <p class="rail-note">Plug in one RUT. The firmware and both configs stay on this Pi. The router’s own password is used once, then replaced.</p>
       <p class="rail-version">{{ version }}</p>
     </aside>
     <main class="main">

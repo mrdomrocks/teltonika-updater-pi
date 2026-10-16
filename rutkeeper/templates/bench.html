@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Bench{% endblock %}
+{% block body %}
+<header class="page-head">
+  <div>
+    <h1>Bench</h1>
+    <p class="lede">Plug a RUT into this Pi. Rutkeeper pings it, then you flash the firmware file stored here and, once it is back, apply Config 1 or Config 2.</p>
+  </div>
+</header>
+
+<p id="bench-announce" class="notice" hidden role="status"></p>
+
+<section class="hero" id="bench-hero" data-phase="{{ bench.phase }}" data-ready-tick="{{ bench.ready_tick }}">
+  <p class="hero-kicker" id="bench-kicker">{% if bench.http %}Ready{% elif bench.ping %}Ping only{% else %}Waiting{% endif %}</p>
+  <p class="hero-host mono" id="bench-host">{{ bench.host }}</p>
+  <p class="hero-detail" id="bench-detail">{{ bench.detail }}</p>
+  <p class="hint" id="bench-rtt">{% if bench.rtt_ms %}Last ping {{ bench.rtt_ms }} ms{% elif bench.ping %}Ping answered{% else %}No ping yet{% endif %}</p>
+  <button class="btn quiet" type="button" id="bench-notify">Allow ready alerts</button>
+</section>
+
+<form class="card form" method="post" action="/bench/run" id="bench-run">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="fields">
+    <label>Password on this router right now
+      <input name="current_password" type="password" autocomplete="off" placeholder="Label or current admin password">
+    </label>
+  </div>
+  <p class="hint">This is used once to sign in. It is not saved. After the config step, the admin password becomes the shared one below, including whatever password was inside the config file.</p>
+  <div class="form-actions wrap">
+    <button class="btn primary" type="submit" name="action" value="firmware" id="flash-button" {% if not bench.firmware_ready or not bench.http %}disabled{% endif %}>Flash firmware</button>
+    <button class="btn quiet" type="submit" name="action" value="config1" id="config1-button" {% if not bench.config1_ready or not bench.http %}disabled{% endif %}>Apply config 1</button>
+    <button class="btn quiet" type="submit" name="action" value="config2" id="config2-button" {% if not bench.config2_ready or not bench.http %}disabled{% endif %}>Apply config 2</button>
+  </div>
+</form>
+
+<div class="detail">
+  <form class="card form" method="post" action="/bench/setup">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <h2>Router and shared password</h2>
+    <div class="fields">
+      <div class="split">
+        <label>Address
+          <input name="host" required value="{{ bench.host }}" spellcheck="false" autocomplete="off">
+        </label>
+        <label>Username
+          <input name="username" required value="{{ bench.username }}" autocomplete="off">
+        </label>
+      </div>
+      <label>Password every router should end up with
+        <input name="target_password" type="password" autocomplete="new-password" placeholder="{% if bench.has_target_password %}Saved. Type a new one to replace it.{% else %}Choose one password{% endif %}">
+      </label>
+      <label class="check">
+        <input type="checkbox" name="simulate" value="1" {% if bench.simulate %}checked{% endif %}>
+        Simulate a router on this address
+      </label>
+    </div>
+    <button class="btn primary" type="submit">Save</button>
+  </form>
+
+  <div class="stack">
+    <form class="card form" method="post" action="/bench/file" enctype="multipart/form-data">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="slot" value="firmware">
+      <h2>Firmware file</h2>
+      <p class="hint">{% if bench.firmware_name %}Stored: <span class="mono">{{ bench.firmware_name }}</span>{% else %}No firmware stored yet.{% endif %}</p>
+      <label>Image
+        <input type="file" name="file" required>
+      </label>
+      <button class="btn quiet" type="submit">Store firmware</button>
+    </form>
+
+    {% for slot, title, stored, has_pw in (
+      ("config1", "Config 1", bench.config1_name, bench.config1_has_password),
+      ("config2", "Config 2", bench.config2_name, bench.config2_has_password)
+    ) %}
+    <form class="card form" method="post" action="/bench/file" enctype="multipart/form-data">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="slot" value="{{ slot }}">
+      <h2>{{ title }}</h2>
+      <p class="hint">{% if stored %}Stored: <span class="mono">{{ stored }}</span>{% else %}No file stored yet.{% endif %}
+        {% if has_pw %} A password for this file is saved.{% endif %}</p>
+      <div class="fields">
+        <label>Backup file
+          <input type="file" name="file" required>
+        </label>
+        <label>Password inside this file, if it replaces the admin password
+          <input name="inside_password" type="password" autocomplete="new-password" placeholder="Leave blank if this file does not change it">
+        </label>
+      </div>
+      <button class="btn quiet" type="submit">Store {{ title }}</button>
+    </form>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

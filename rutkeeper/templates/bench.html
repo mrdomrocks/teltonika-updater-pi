@@ -4,7 +4,7 @@
 <header class="page-head">
   <div>
     <h1>Bench</h1>
-    <p class="lede">Plug a RUT into this Pi. Rutkeeper pings it, then you flash the firmware file stored here and, once it is back, apply Config 1 or Config 2.</p>
+    <p class="lede">Plug a RUT into this Pi. When it answers, type its current password, pick a config, and install. Rutkeeper writes the firmware stored here, waits for the router, applies that config, then sets the shared password.</p>
   </div>
 </header>
 
@@ -16,21 +16,47 @@
   <p class="hero-detail" id="bench-detail">{{ bench.detail }}</p>
   <p class="hint" id="bench-rtt">{% if bench.rtt_ms %}Last ping {{ bench.rtt_ms }} ms{% elif bench.ping %}Ping answered{% else %}No ping yet{% endif %}</p>
   <button class="btn quiet" type="button" id="bench-notify">Allow ready alerts</button>
+  <ol class="install-steps" id="install-steps">
+    <li data-step="login">Sign in</li>
+    <li data-step="firmware">Write firmware</li>
+    <li data-step="firmware-reboot">Wait for the router</li>
+    <li data-step="config">Apply the selected config</li>
+    <li data-step="config-reboot">Wait for the router again</li>
+    <li data-step="password">Set the shared password</li>
+  </ol>
 </section>
 
 <form class="card form" method="post" action="/bench/run" id="bench-run">
   <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="action" value="install">
+  <h2>Install</h2>
   <div class="fields">
     <label>Password on this router right now
       <input name="current_password" type="password" autocomplete="off" placeholder="Label or current admin password">
     </label>
   </div>
-  <p class="hint">This is used once to sign in. It is not saved. After the config step, the admin password becomes the shared one below, including whatever password was inside the config file.</p>
-  <div class="form-actions wrap">
-    <button class="btn primary" type="submit" name="action" value="firmware" id="flash-button" {% if not bench.firmware_ready or not bench.http %}disabled{% endif %}>Flash firmware</button>
-    <button class="btn quiet" type="submit" name="action" value="config1" id="config1-button" {% if not bench.config1_ready or not bench.http %}disabled{% endif %}>Apply config 1</button>
-    <button class="btn quiet" type="submit" name="action" value="config2" id="config2-button" {% if not bench.config2_ready or not bench.http %}disabled{% endif %}>Apply config 2</button>
-  </div>
+  <p class="hint">Used once to sign in. It is not saved. After the config is on, the admin password becomes the shared one, including any password that was inside the config file.</p>
+  <fieldset class="choices">
+    <legend>Config to apply after the firmware</legend>
+    {% set pick = "config1" if bench.config1_ready else ("config2" if bench.config2_ready else "") %}
+    <label class="choice">
+      <input type="radio" name="config" value="config1" {% if pick == "config1" %}checked{% endif %} {% if not bench.config1_ready %}disabled{% endif %}>
+      <span>
+        <strong>Config 1</strong>
+        <span class="hint">{% if bench.config1_name %}{{ bench.config1_name }}{% else %}Not stored yet{% endif %}</span>
+      </span>
+    </label>
+    <label class="choice">
+      <input type="radio" name="config" value="config2" {% if pick == "config2" %}checked{% endif %} {% if not bench.config2_ready %}disabled{% endif %}>
+      <span>
+        <strong>Config 2</strong>
+        <span class="hint">{% if bench.config2_name %}{{ bench.config2_name }}{% else %}Not stored yet{% endif %}</span>
+      </span>
+    </label>
+  </fieldset>
+  <p class="hint" id="install-files">Firmware: {% if bench.firmware_name %}<span class="mono">{{ bench.firmware_name }}</span>{% else %}not stored yet{% endif %}</p>
+  <p class="hint" id="install-hint">Type this router’s current password, pick a config, then install.</p>
+  <button class="btn primary install" type="submit" id="install-button" disabled>Install</button>
 </form>
 
 <div class="detail">

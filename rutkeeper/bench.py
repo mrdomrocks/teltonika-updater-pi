@@ -1,9 +1,9 @@
 """Bench for one RUT plugged into the Pi.
 
 The firmware image and two config files live on the Pi. A watcher pings the
-router address. Flashing uses the local file, keeps the current login long
-enough to come back, then a config click applies Config 1 or Config 2 and
-replaces the admin password with the single password stored on the Pi.
+router address. One install signs in, writes the local firmware, waits for
+the router, applies Config 1 or Config 2, then replaces the admin password
+with the single password stored on the Pi.
 
 The password that was already on the router is held in memory for that job
 only. It is not written to the database.
@@ -11,6 +11,7 @@ only. It is not written to the database.
 
 from __future__ import annotations
 
+import os
 import socket
 import subprocess
 import threading
@@ -133,6 +134,7 @@ class Bench:
             "detail": "Plug the router into this Pi.",
             "error": "",
             "ready_tick": 0,
+            "step": "",
         }
 
     def start(self) -> None:
@@ -202,31 +204,33 @@ class Bench:
         self.db.set_settings({NAME_KEYS[slot]: _safe_name(filename)})
         self.db.add_event("info", "bench", f"Stored {_safe_name(filename)} on this Pi.")
 
-    def start_job(self, action: str, typed_password: str) -> None:
+    def start_job(self, action: str, typed_password: str, slot: str = "") -> None:
         with self._lock:
             if self._inflight:
                 raise Busy(action)
             self._inflight = True
-        self._set(phase="busy", job=action, error="", detail="Working.")
+        self._set(phase="busy", job=action, step="login", error="", detail="Signing in.")
         thread = threading.Thread(
             target=self._run_safe,
-            args=(action, typed_password),
+            args=(action, typed_password, slot),
             name=f"rutkeeper-bench-{action}",
             daemon=True,
         )
         thread.start()
 
-    def run_inline(self, action: str, typed_password: str) -> None:
+    def run_inline(self, action: str, typed_password: str, slot: str = "") -> None:
         with self._lock:
             if self._inflight:
                 raise Busy(action)
             self._inflight = True
-        self._set(phase="busy", job=action, error="", detail="Working.")
-        self._run_safe(action, typed_password)
+        self._set(phase="busy", job=action, step="login", error="", detail="Signing in.")
+        self._run_safe(action, typed_password, slot)
 
-    def _run_safe(self, action: str, typed_password: str) -> None:
+    def _run_safe(self, action: str, typed_password: str, slot: str = "") -> None:
         try:
-            if action == "firmware":
+            if action == "install":
+                self._install(typed_password, slot)
+            elif action == "firmware":
                 self._flash(typed_password)
             elif action in {"config1", "config2"}:
                 self._apply_config(action, typed_password)
@@ -240,18 +244,27 @@ class Bench:
             with self._lock:
                 self._inflight = False
 
-    def _flash(self, typed_password: str) -> None:
+    def _install(self, typed_password: str, slot: str) -> None:
+        if slot not in {"config1", "config2"}:
+            raise RutosError("Select Config 1 or Config 2.")
+        if not self._path(slot).exists():
+            raise RutosError("Store that config on the Pi before installing.")
+        self._flash(typed_password, hold=True)
+        self._apply_config(slot, typed_password)
+
+    def _flash(self, typed_password: str, *, hold: bool = False) -> None:
         path = self._path("firmware")
         if not path.exists():
             raise RutosError("Store a firmware file on the Pi first.")
         name = self.db.setting("bench_firmware_name") or "firmware.bin"
         content = path.read_bytes()
+        self._set(step="login", detail="Signing in.")
         router, password = self._connect(self._candidates(typed_password))
         self._session_password = password
         try:
-            self._set(detail=f"Uploading {name}.")
+            self._set(step="firmware", detail=f"Uploading {name}.")
             router.upload_firmware(name, content)
-            self._set(detail="Starting the firmware install. Settings stay so this login still works.")
+            self._set(step="firmware", detail="Starting the firmware install. Settings stay so this login still works.")
             try:
                 router.upgrade_staged()
             except RutosError as exc:
@@ -260,13 +273,17 @@ class Bench:
         finally:
             router.close()
         self.db.add_event("warn", "bench", f"Firmware install started from {name}. Waiting for the router to reboot.")
-        self._set(phase="rebooting", job="firmware", detail="Router is rebooting after firmware.")
+        self._set(phase="rebooting", step="firmware-reboot", job="firmware", detail="Router is rebooting after firmware.")
         self._wait_until_back()
+        self._set(step="firmware-reboot", detail="Signing in again.")
         router, password = self._connect(self._candidates(typed_password))
         router.close()
         self._session_password = password
-        self._set(phase="ready", job="", error="", detail="Firmware is in. The router answered again. Apply a config when you want.")
         self.db.add_event("info", "bench", "Router is back after the firmware install.")
+        if hold:
+            self._set(phase="busy", job="install", step="config", error="", detail="Firmware is in. Applying the selected config.")
+            return
+        self._set(phase="ready", job="", step="done", error="", detail="Firmware is in. The router answered again.")
 
     def _apply_config(self, slot: str, typed_password: str) -> None:
         path = self._path(slot)
@@ -279,9 +296,10 @@ class Bench:
         content = path.read_bytes()
         embedded_key = "bench_config1_password_enc" if slot == "config1" else "bench_config2_password_enc"
         embedded = self.secrets.decrypt(self.db.setting(embedded_key))
+        self._set(step="config", detail=f"Signing in to apply {name}.")
         router, password = self._connect(self._candidates(typed_password, embedded))
         try:
-            self._set(detail=f"Uploading {name}.")
+            self._set(step="config", detail=f"Uploading {name}.")
             router.upload_backup(name, content)
             router.apply_backup()
             if isinstance(router, SimRouter):
@@ -289,8 +307,9 @@ class Bench:
         finally:
             router.close()
         self.db.add_event("warn", "bench", f"Applied {name}. Waiting for the router to come back so the password can be replaced.")
-        self._set(phase="rebooting", job=slot, detail="Router is rebooting after the config.")
+        self._set(phase="rebooting", step="config-reboot", job=slot, detail="Router is rebooting after the config.")
         self._wait_until_back()
+        self._set(step="password", detail="Signing in to set the shared password.")
         router, used = self._connect(self._candidates(typed_password, embedded, password))
         try:
             if used != target:
@@ -304,7 +323,7 @@ class Bench:
         confirm.close()
         self._session_password = ""
         label = "Config 1" if slot == "config1" else "Config 2"
-        self._set(phase="ready", job="", error="", detail=f"{label} is on. The admin password is now the shared one.")
+        self._set(phase="ready", job="", step="done", error="", detail=f"{label} is on. The admin password is now the shared one.")
         self.db.add_event("info", "bench", f"{label} applied and the admin password is the shared password.")
 
     def _candidates(self, *extra: str) -> list[str]:
@@ -365,7 +384,17 @@ class Bench:
 
     def _probe_once(self) -> None:
         if self.db.setting("bench_simulate") == "1":
-            self._mark(ping=True, http=True, rtt_ms=1, detail=str(self.status.get("detail") or "Simulated router is ready."))
+            phase = str(self.status.get("phase") or "offline")
+            if phase in {"busy", "rebooting"}:
+                return
+            current = str(self.status.get("detail") or "")
+            keep = phase == "ready" and current and not current.startswith("Plug the router")
+            self._mark(
+                ping=True,
+                http=True,
+                rtt_ms=1,
+                detail=current if keep else "Simulated router is ready.",
+            )
             return
         phase = str(self.status.get("phase") or "offline")
         if phase in {"busy", "rebooting"}:
@@ -397,6 +426,18 @@ class Bench:
     def _set(self, **fields: object) -> None:
         with self._lock:
             self.status.update(fields)
+        self._pace()
+
+    def _pace(self) -> None:
+        """Hold each simulated step long enough for the bench page to show it."""
+        if self.db.setting("bench_simulate") != "1":
+            return
+        try:
+            delay = float(os.environ.get("RUTKEEPER_DEMO_DELAY", "0.8") or 0)
+        except ValueError:
+            delay = 0
+        if delay > 0:
+            time.sleep(min(delay, 3))
 
     def _path(self, slot: str) -> Path:
         return self.directory / SLOTS[slot]

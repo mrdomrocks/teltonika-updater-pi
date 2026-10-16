@@ -1,6 +1,6 @@
 # Rutkeeper
 
-Rutkeeper is a bench for a Raspberry Pi. Plug in one Teltonika RUT, and the Pi pings it until the router answers. The firmware image and two config files stay on the Pi. One click flashes the firmware. When the router is back, one click applies Config 1 or Config 2, then sets the admin password to a single password you chose.
+Rutkeeper is a bench for a Raspberry Pi. Plug in one Teltonika RUT, and the Pi pings it until the router answers. The firmware image and two config files stay on the Pi. In the browser, type the password on that router, pick Config 1 or Config 2, and press Install. Rutkeeper writes the firmware, waits for the router, applies the config, then sets the admin password to a single password you chose.
 
 The dashboard listens on port **8741**.
 
@@ -12,8 +12,7 @@ The dashboard listens on port **8741**.
 4. If a config file contains its own admin password, type that password next to the file. Rutkeeper needs it to sign back in after the file is applied, then it overwrites it.
 5. Plug the router in. The page pings every couple of seconds. When the router answers, the status turns ready, the tab beeps, and a browser alert fires if you allowed alerts.
 6. Type the password that is on **this** router right now (the label, or the factory default `admin01`). That value is not saved.
-7. Flash firmware. The Pi uploads the file with `/firmware/actions/upload_device_firmware` and installs it with settings kept, so the same password still works after the reboot.
-8. When the router answers again, apply Config 1 or Config 2. After it comes back, the admin password is changed to the shared one. The password that was on the router, and the one inside the config, are not written to disk.
+7. Pick Config 1 or Config 2 and press Install. The page shows each step: sign in, write the firmware (`/firmware/actions/upload_device_firmware`, settings kept so the same login still works), wait for the reboot, apply the config, wait again, then change the admin password to the shared one. The password that was on the router, and the one inside the config, are not written to disk.
 
 Rutkeeper cannot sign in with no password at all. The password already on the unit is required for that one login. It is held in memory for the job and then discarded.
 

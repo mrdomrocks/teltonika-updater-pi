@@ -48,28 +48,80 @@
       }
     };
 
+    var steps = ["login", "firmware", "firmware-reboot", "config", "config-reboot", "password"];
+    var last = null;
+
     var paint = function (data) {
+      last = data;
       hero.setAttribute("data-phase", data.phase || "offline");
       var kicker = document.getElementById("bench-kicker");
       var detail = document.getElementById("bench-detail");
       var rtt = document.getElementById("bench-rtt");
       var host = document.getElementById("bench-host");
+      var busy = data.phase === "busy" || data.phase === "rebooting";
       if (kicker) {
-        kicker.textContent = data.http ? "Ready" : data.ping ? "Ping only" : data.phase === "rebooting" ? "Rebooting" : "Waiting";
+        if (data.phase === "rebooting") kicker.textContent = "Rebooting";
+        else if (busy) kicker.textContent = "Installing";
+        else if (data.http) kicker.textContent = "Ready";
+        else if (data.ping) kicker.textContent = "Ping only";
+        else kicker.textContent = "Waiting";
       }
       if (detail) detail.textContent = data.error || data.detail || "";
       if (host) host.textContent = data.host || "";
       if (rtt) {
         rtt.textContent = data.rtt_ms ? "Last ping " + data.rtt_ms + " ms" : data.ping ? "Ping answered" : "No ping yet";
       }
-      var flash = document.getElementById("flash-button");
-      var config1 = document.getElementById("config1-button");
-      var config2 = document.getElementById("config2-button");
-      var busy = data.phase === "busy" || data.phase === "rebooting";
-      if (flash) flash.disabled = busy || !data.firmware_ready || !data.http;
-      if (config1) config1.disabled = busy || !data.config1_ready || !data.http;
-      if (config2) config2.disabled = busy || !data.config2_ready || !data.http;
+      var current = data.step || "";
+      var index = steps.indexOf(current);
+      var failed = Boolean(data.error);
+      document.querySelectorAll("#install-steps li").forEach(function (item) {
+        var mine = steps.indexOf(item.getAttribute("data-step"));
+        item.classList.remove("done", "now", "fail");
+        if (current === "done" || (index > mine && mine >= 0)) item.classList.add("done");
+        else if (index === mine) item.classList.add(failed ? "fail" : "now");
+      });
+      var radio1 = document.querySelector('#bench-run input[value="config1"]');
+      var radio2 = document.querySelector('#bench-run input[value="config2"]');
+      if (radio1) {
+        radio1.disabled = busy || !data.config1_ready;
+        if (radio1.disabled) radio1.checked = false;
+      }
+      if (radio2) {
+        radio2.disabled = busy || !data.config2_ready;
+        if (radio2.disabled) radio2.checked = false;
+      }
+      var selected = document.querySelector('#bench-run input[name="config"]:checked');
+      var slot = selected ? selected.value : "";
+      var configReady = slot === "config1" ? data.config1_ready : slot === "config2" ? data.config2_ready : false;
+      var password = document.querySelector('#bench-run input[name="current_password"]');
+      var typed = Boolean(password && password.value);
+      var install = document.getElementById("install-button");
+      if (install) {
+        install.disabled = busy || !typed || !data.http || !data.firmware_ready || !configReady || !data.has_target_password;
+      }
+      var hint = document.getElementById("install-hint");
+      if (hint && !busy && !data.error) {
+        if (!data.firmware_ready) hint.textContent = "Store a firmware file first.";
+        else if (!data.config1_ready && !data.config2_ready) hint.textContent = "Store Config 1 or Config 2.";
+        else if (!data.has_target_password) hint.textContent = "Save the shared password first.";
+        else if (!data.http) hint.textContent = "Waiting for the router to answer.";
+        else if (!typed) hint.textContent = "Type this router’s current password, pick a config, then install.";
+        else if (!configReady) hint.textContent = "Pick Config 1 or Config 2.";
+        else hint.textContent = "Install signs in, writes the firmware, applies the config, then sets the shared password.";
+      }
     };
+
+    var passwordField = document.querySelector('#bench-run input[name="current_password"]');
+    if (passwordField) {
+      passwordField.addEventListener("input", function () {
+        if (last) paint(last);
+      });
+    }
+    document.querySelectorAll('#bench-run input[name="config"]').forEach(function (radio) {
+      radio.addEventListener("change", function () {
+        if (last) paint(last);
+      });
+    });
 
     var poll = function () {
       fetch("/bench/status", { headers: { Accept: "application/json" } })
@@ -101,11 +153,18 @@
         .catch(function () { return null; });
     };
     poll();
-    window.setInterval(poll, 2000);
+    window.setInterval(poll, 1000);
   }
 
   document.querySelectorAll("form").forEach(function (form) {
     form.addEventListener("submit", function (event) {
+      if (form.id === "bench-run") {
+        var install = document.getElementById("install-button");
+        if (install && install.disabled) {
+          event.preventDefault();
+          return;
+        }
+      }
       var message = form.getAttribute("data-confirm");
       if (message && !window.confirm(message)) {
         event.preventDefault();

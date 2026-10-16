@@ -225,11 +225,15 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @app.post("/bench/run")
     async def bench_run(request: Request):
         form = await posted(request)
-        action = str(form.get("action") or "")
-        if action not in {"firmware", "config1", "config2"}:
+        action = str(form.get("action") or "install")
+        slot = str(form.get("config") or "")
+        if action == "install":
+            if slot not in {"config1", "config2"}:
+                return redirect("/", "Select Config 1 or Config 2.")
+        elif action not in {"firmware", "config1", "config2"}:
             return redirect("/", "Choose firmware or a config.")
         try:
-            bench.start_job(action, str(form.get("current_password") or ""))
+            bench.start_job(action, str(form.get("current_password") or ""), slot)
         except BenchBusy:
             return redirect("/", "The bench is already working on this router.")
         return redirect("/", "Job started.")

@@ -31,7 +31,7 @@
         <a href="/rms" {% if path == "/rms" %}aria-current="page"{% endif %}>RMS</a>
         <a href="/log" {% if path == "/log" %}aria-current="page"{% endif %}>Log</a>
       </nav>
-      <p class="rail-note">Plug in one RUT. The firmware and both configs stay on this Pi. The router’s own password is used once, then replaced.</p>
+      <p class="rail-note">Plug in one RUT. One install writes the firmware, applies the config you picked, and sets the shared password.</p>
       <p class="rail-version">{{ version }}</p>
     </aside>
     <main class="main">

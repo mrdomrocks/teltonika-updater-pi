@@ -1,5 +1,5 @@
 [Unit]
-Description=Rutkeeper Teltonika firmware and config keeper
+Description=TUA Teltonika firmware and config keeper
 After=network-online.target
 Wants=network-online.target
 

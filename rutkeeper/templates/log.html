@@ -28,8 +28,8 @@
       <tr>
         <td data-label="When" class="nowrap">{{ event.created_at|when }}</td>
         <td data-label="Router">
-          {% if event.device_id and event.device_name %}
-          <a href="/devices/{{ event.device_id }}">{{ event.device_name }}</a>
+          {% if event.device_name %}
+          <span>{{ event.device_name }}</span>
           {% else %}
           <span class="muted">Site</span>
           {% endif %}

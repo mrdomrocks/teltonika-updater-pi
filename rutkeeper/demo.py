@@ -64,7 +64,7 @@ class DemoSession:
     def fota_download(self, channel: str = "stable") -> dict:
         self._online()
         if channel != "stable":
-            raise RutosError("Rutkeeper only requests the stable channel.")
+            raise RutosError("TUA only requests the stable channel.")
         if not self.device.get("update_version"):
             raise RutosError("No stable package is waiting on this router.")
         return {"success": True, "data": {"type": "stable"}}

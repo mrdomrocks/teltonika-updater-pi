@@ -4,7 +4,7 @@
 <header class="page-head">
   <div>
     <h1>Backups</h1>
-    <p class="lede">Files stay on this Pi. Mark one as a rollout profile to push it onto routers with the same product code.</p>
+    <p class="lede">Files stay on this Pi. Download one, or keep a named copy of a backup you trust.</p>
   </div>
 </header>
 {% if error %}<p class="notice bad" role="alert">{{ error }}</p>{% endif %}
@@ -37,7 +37,7 @@
         </label>
       </div>
     </div>
-    <p class="hint">A profile name makes this file available to push. Leave it blank to store the file without offering it.</p>
+    <p class="hint">A profile name is a label for a backup you want to recognise later. Leave it blank to store the file as it is.</p>
     <button class="btn primary" type="submit">Store on this Pi</button>
   </form>
 </section>
@@ -45,7 +45,7 @@
 {% if not backups %}
 <section class="empty">
   <h2>No backups stored</h2>
-  <p>Open a router and save a device backup, or upload one you already trust.</p>
+  <p>Upload a backup you already trust. It stays on this Pi.</p>
 </section>
 {% else %}
 <div class="stack">
@@ -85,27 +85,6 @@
         <button class="btn danger" type="submit">Delete</button>
       </form>
     </div>
-    {% if row.is_profile %}
-      {% if row.compatible %}
-      <form method="post" action="/backups/{{ row.id }}/push" class="push-row" data-confirm="Push this backup? The router reboots and takes the admin password stored in the file.">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <label>Push to
-          <select name="device_id">
-            {% for device in row.compatible %}
-            <option value="{{ device.id }}">{{ device.name }}</option>
-            {% endfor %}
-          </select>
-        </label>
-        <label class="check">
-          <input type="checkbox" name="confirm" value="1" required>
-          Replace that router’s configuration.
-        </label>
-        <button class="btn danger" type="submit">Push config</button>
-      </form>
-      {% else %}
-      <p class="hint">No router in the fleet can take this file yet. Product code and firmware have to match Teltonika’s rules.</p>
-      {% endif %}
-    {% endif %}
   </article>
   {% endfor %}
 </div>

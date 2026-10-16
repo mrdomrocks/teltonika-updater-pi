@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install Rutkeeper on Raspberry Pi OS or another Debian-family system.
+# Install TUA on Raspberry Pi OS or another Debian-family system.
 #   sudo ./install/install.sh
 #   ./install/install.sh --user
 set -euo pipefail
@@ -44,7 +44,7 @@ if [[ "$MODE" == "system" ]]; then
   chown -R rutkeeper:rutkeeper "$PREFIX" "$DATA"
   cat > /etc/systemd/system/rutkeeper.service <<EOF
 [Unit]
-Description=Rutkeeper Teltonika firmware and config keeper
+Description=TUA Teltonika firmware and config keeper
 After=network-online.target
 Wants=network-online.target
 
@@ -73,7 +73,7 @@ EOF
   systemctl daemon-reload
   systemctl enable --now rutkeeper.service
   echo
-  echo "Rutkeeper is running at http://$(hostname -I | awk '{print $1}'):8741"
+  echo "TUA is running at http://$(hostname -I | awk '{print $1}'):8741"
   echo "Data directory: $DATA"
 else
   echo

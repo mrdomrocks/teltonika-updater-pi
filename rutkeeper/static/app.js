@@ -144,7 +144,7 @@
             }
             beep();
             if (window.Notification && Notification.permission === "granted") {
-              new Notification("Rutkeeper", { body: message });
+              new Notification("TUA", { body: message });
             }
           } else {
             lastTick = tick;

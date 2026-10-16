@@ -409,7 +409,7 @@ class Runner:
         self.db.add_event(
             "warn",
             "schedule",
-            f"The {hour:02d}:{minute:02d} window passed while Rutkeeper was stopped. It will not catch up.",
+            f"The {hour:02d}:{minute:02d} window passed while TUA was stopped. It will not catch up.",
         )
 
     def run_rms(self, *, scheduled: bool = False) -> object:

@@ -7,7 +7,7 @@ triggered with:
     Authorization: Bearer <token>
     {"device_id":[...], "tasks":[{"task_id": ..., "variables": []}, ...]}
 
-Rutkeeper runs that call from the Pi instead of from a crontab on each router.
+TUA runs that call from the Pi instead of from a crontab on each router.
 """
 
 from __future__ import annotations

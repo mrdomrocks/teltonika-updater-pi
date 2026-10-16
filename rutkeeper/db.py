@@ -14,7 +14,7 @@ def utcnow() -> str:
 
 
 DEFAULTS = {
-    "site_name": "Rutkeeper",
+    "site_name": "TUA",
     "armed": "0",
     "when": "first_monday",
     "hour": "4",

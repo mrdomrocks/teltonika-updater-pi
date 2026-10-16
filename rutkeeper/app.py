@@ -1,4 +1,4 @@
-"""Web app for the Rutkeeper Pi appliance."""
+"""Web app for the TUA Pi appliance."""
 
 from __future__ import annotations
 
@@ -17,21 +17,17 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from rutkeeper import __version__
 from rutkeeper.crypto import SecretBox
 from rutkeeper.db import DB
-from rutkeeper.firmware import backup_compatibility, human_size
+from rutkeeper.firmware import human_size
 from rutkeeper.rms import parse_id_list, summarize_devices, task_group_body
 from rutkeeper.rms import RmsClient, RmsError
-from rutkeeper.rutos import RutosError, api_base
+from rutkeeper.rutos import RutosError
 from rutkeeper.bench import Bench, connect_host
 from rutkeeper.bench import Busy as BenchBusy
-from rutkeeper.worker import Busy, Runner
+from rutkeeper.worker import Runner
 
 PACKAGE = Path(__file__).resolve().parent
-BUSY_LABELS = {
-    "check": "Checking firmware",
-    "backup": "Saving a backup",
-    "update": "Installing firmware",
-    "push": "Applying configuration",
-}
+
+
 def default_data_dir() -> Path:
     env = os.environ.get("RUTKEEPER_DATA")
     if env:
@@ -65,7 +61,6 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     data.mkdir(parents=True, exist_ok=True)
     (data / "backups").mkdir(parents=True, exist_ok=True)
     db = DB(data / "rutkeeper.sqlite")
-    db.seed_demos()
     box = SecretBox(data / "secret.key")
     runner = Runner(db, box, data / "backups")
     runner.demo_delay = float(os.environ.get("RUTKEEPER_DEMO_DELAY", "0.5"))
@@ -87,7 +82,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         bench.stop()
         db.close()
 
-    app = FastAPI(title="Rutkeeper", docs_url=None, redoc_url=None, lifespan=lifespan)
+    app = FastAPI(title="TUA", docs_url=None, redoc_url=None, lifespan=lifespan)
     app.state.db = db
     app.state.runner = runner
     app.state.bench = bench
@@ -100,11 +95,9 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         html = env.get_template(template).render(
             csrf=request.state.csrf,
             settings=settings,
-            site_name=settings.get("site_name") or "Rutkeeper",
+            site_name="TUA" if (settings.get("site_name") or "TUA") in {"", "Rutkeeper", "TUA"} else settings.get("site_name"),
             notice=request.query_params.get("notice", ""),
             version=__version__,
-            any_busy=db.any_busy(),
-            busy_labels=BUSY_LABELS,
             now_label=now.strftime("%H:%M"),
             zone_label=now.tzname() or "local",
             now_epoch=int(now.timestamp() * 1000),
@@ -118,12 +111,6 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             join = "&" if "?" in url else "?"
             url = f"{url}{join}notice={notice}"
         return RedirectResponse(url, status_code=303)
-
-    def require_device(device_id: int) -> dict:
-        device = db.device(device_id)
-        if not device:
-            raise HTTPException(404, "Router not found.")
-        return device
 
     async def posted(request: Request):
         form = await request.form()
@@ -166,8 +153,8 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             str(form.get("target_password") or ""),
             bool(form.get("simulate")),
         )
-        db.add_event("info", "bench", "Bench setup saved.")
-        return redirect("/", "Bench setup saved.")
+        db.add_event("info", "workbench", "Workbench setup saved.")
+        return redirect("/", "Workbench setup saved.")
 
     @app.post("/bench/file")
     async def bench_file(request: Request):
@@ -197,182 +184,12 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         try:
             bench.start_job(action, str(form.get("current_password") or ""), slot)
         except BenchBusy:
-            return redirect("/", "The bench is already working on this router.")
+            return redirect("/", "The workbench is already working on this router.")
         return redirect("/", "Job started.")
-
-    @app.get("/fleet")
-    def fleet(request: Request) -> HTMLResponse:
-        devices = db.devices()
-        return render(
-            request,
-            "fleet.html",
-            devices=devices,
-            demo_count=sum(1 for device in devices if device["is_demo"]),
-        )
-
-    @app.post("/demos/remove")
-    async def remove_demos(request: Request) -> RedirectResponse:
-        await posted(request)
-        db.delete_demos()
-        db.add_event("info", "fleet", "Removed the simulated routers.")
-        return redirect("/fleet", "Simulated routers removed.")
-
-    @app.get("/devices/new")
-    def new_device(request: Request) -> HTMLResponse:
-        return render(request, "device_edit.html", device=_blank_device(), error="", creating=True)
-
-    @app.post("/devices")
-    async def create_device(request: Request):
-        form = await posted(request)
-        fields, error = _device_fields(form, box, existing=None)
-        if error:
-            draft = _blank_device()
-            draft.update({key: fields.get(key, draft.get(key)) for key in draft if key in fields})
-            draft["host"] = str(form.get("host") or "")
-            draft["name"] = str(form.get("name") or "")
-            return render(request, "device_edit.html", device=draft, error=error, creating=True, status=400)
-        device_id = db.insert_device(fields)
-        db.add_event("info", "fleet", f"Added {fields['name']}.", device_id=device_id)
-        if form.get("check_after"):
-            try:
-                runner.start(device_id, "check")
-            except Busy:
-                pass
-        return redirect(f"/devices/{device_id}", "Router saved.")
-
-    @app.get("/devices/{device_id}")
-    def device_page(request: Request, device_id: int) -> HTMLResponse:
-        device = require_device(device_id)
-        backups = [row for row in db.backups() if row.get("device_id") == device_id][:8]
-        pushable = []
-        blocked_profiles = []
-        for row in db.backups():
-            if not row.get("is_profile"):
-                continue
-            ok, reason = backup_compatibility(
-                row.get("firmware") or "",
-                device.get("firmware") or "",
-                row.get("product_code") or "",
-                device.get("product_code") or "",
-            )
-            if ok:
-                pushable.append(row)
-            else:
-                item = dict(row)
-                item["blocked"] = reason
-                blocked_profiles.append(item)
-        return render(
-            request,
-            "device.html",
-            device=device,
-            error="",
-            backups=backups,
-            pushable=pushable,
-            blocked_profiles=blocked_profiles,
-            events=db.events(limit=12, device_id=device_id),
-            detail=pretty_json(device.get("last_detail") or ""),
-            backup_kind=db.setting("backup_kind", "device"),
-        )
-
-    @app.post("/devices/{device_id}")
-    async def save_device(request: Request, device_id: int):
-        device = require_device(device_id)
-        form = await posted(request)
-        fields, error = _device_fields(form, box, existing=device)
-        if error:
-            merged = dict(device)
-            merged.update(fields)
-            merged["host"] = str(form.get("host") or device["host"])
-            return render(
-                request,
-                "device.html",
-                device=merged,
-                error=error,
-                backups=[],
-                pushable=[],
-                blocked_profiles=[],
-                events=db.events(limit=12, device_id=device_id),
-                detail=pretty_json(device.get("last_detail") or ""),
-                backup_kind=db.setting("backup_kind", "device"),
-                status=400,
-            )
-        db.update_device(device_id, fields)
-        return redirect(f"/devices/{device_id}", "Router saved.")
-
-    @app.post("/devices/{device_id}/delete")
-    async def delete_device(request: Request, device_id: int) -> RedirectResponse:
-        device = require_device(device_id)
-        await posted(request)
-        db.delete_device(device_id)
-        db.add_event("info", "fleet", f"Removed {device['name']}.")
-        return redirect("/fleet", "Router removed.")
-
-    @app.post("/devices/{device_id}/check")
-    async def check_device(request: Request, device_id: int) -> RedirectResponse:
-        require_device(device_id)
-        await posted(request)
-        return _queue(device_id, "check")
-
-    @app.post("/devices/{device_id}/backup")
-    async def backup_device(request: Request, device_id: int) -> RedirectResponse:
-        require_device(device_id)
-        form = await posted(request)
-        kind = str(form.get("kind") or "device")
-        if kind not in {"device", "configuration"}:
-            kind = "device"
-        return _queue(device_id, "backup", kind=kind)
-
-    @app.post("/devices/{device_id}/update")
-    async def update_device(request: Request, device_id: int) -> RedirectResponse:
-        device = require_device(device_id)
-        form = await posted(request)
-        if form.get("confirm") != "1":
-            return redirect(f"/devices/{device_id}", "Confirm the firmware install before starting it.")
-        if device.get("update_state") != "available":
-            return redirect(f"/devices/{device_id}", "Check the router first. No stable package is waiting.")
-        return _queue(device_id, "update")
-
-    @app.post("/devices/{device_id}/push")
-    async def push_device(request: Request, device_id: int) -> RedirectResponse:
-        require_device(device_id)
-        form = await posted(request)
-        if form.get("confirm") != "1":
-            return redirect(
-                f"/devices/{device_id}",
-                "Confirm the config push. It replaces settings, including the admin password.",
-            )
-        try:
-            backup_id = int(form.get("backup_id") or 0)
-        except ValueError:
-            return redirect(f"/devices/{device_id}", "Choose a backup to push.")
-        return _queue(device_id, "push", backup_id=backup_id)
-
-    def _queue(device_id: int, action: str, **kwargs: object) -> RedirectResponse:
-        try:
-            runner.start(device_id, action, **kwargs)
-        except Busy:
-            return redirect(f"/devices/{device_id}", "This router already has a job running.")
-        return redirect(f"/devices/{device_id}", "Job started.")
 
     @app.get("/backups")
     def backups_page(request: Request) -> HTMLResponse:
-        rows = []
-        devices = db.devices()
-        for row in db.backups():
-            item = dict(row)
-            compatible = []
-            for device in devices:
-                ok, _reason = backup_compatibility(
-                    item.get("firmware") or "",
-                    device.get("firmware") or "",
-                    item.get("product_code") or "",
-                    device.get("product_code") or "",
-                )
-                if ok:
-                    compatible.append(device)
-            item["compatible"] = compatible
-            rows.append(item)
-        return render(request, "backups.html", backups=rows, error="")
+        return render(request, "backups.html", backups=_annotated_backups(db), error="")
 
     @app.post("/backups")
     async def upload_backup(request: Request):
@@ -392,7 +209,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                 request,
                 "backups.html",
                 backups=_annotated_backups(db),
-                error="Product code and firmware version are required so a push can be checked.",
+                error="Product code and firmware version are required.",
                 status=400,
             )
         import hashlib
@@ -440,20 +257,6 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             if path.exists():
                 path.unlink()
         return redirect("/backups", "Backup deleted.")
-
-    @app.post("/backups/{backup_id}/push")
-    async def push_from_library(request: Request, backup_id: int) -> RedirectResponse:
-        if not db.backup(backup_id):
-            raise HTTPException(404, "Backup not found.")
-        form = await posted(request)
-        if form.get("confirm") != "1":
-            return redirect("/backups", "Confirm the config push. It replaces settings, including the admin password.")
-        try:
-            device_id = int(form.get("device_id") or 0)
-        except ValueError:
-            return redirect("/backups", "Choose a router.")
-        require_device(device_id)
-        return _queue(device_id, "push", backup_id=backup_id)
 
     @app.get("/backups/{backup_id}/download")
     def download_backup(backup_id: int) -> FileResponse:
@@ -558,69 +361,6 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     return app
 
 
-def _blank_device() -> dict:
-    return {
-        "id": None,
-        "name": "",
-        "host": "",
-        "username": "admin",
-        "verify_tls": 0,
-        "auto_apply": 0,
-        "keep_settings": 1,
-        "schedule_enabled": 1,
-        "notes": "",
-        "is_demo": 0,
-        "firmware": "",
-        "product_code": "",
-        "model": "",
-        "serial": "",
-        "update_state": "unknown",
-        "update_version": "",
-        "busy": 0,
-        "busy_action": "",
-        "last_error": "",
-        "last_seen": None,
-        "last_backup_at": None,
-    }
-
-
-def _device_fields(form, box: SecretBox, existing: dict | None) -> tuple[dict, str]:
-    name = str(form.get("name") or "").strip()
-    host_raw = str(form.get("host") or "").strip()
-    username = str(form.get("username") or "admin").strip() or "admin"
-    if not name:
-        return {}, "Name the router."
-    if not host_raw:
-        return {}, "Add the router address."
-    if host_raw.startswith("demo://"):
-        host = host_raw
-    else:
-        try:
-            host = api_base(host_raw).removesuffix("/api")
-        except RutosError as exc:
-            return {}, str(exc)
-    password = str(form.get("password") or "")
-    is_demo = host.startswith("demo://")
-    if not is_demo and not password and not (existing and existing.get("password_enc")):
-        return {}, "Add the admin password. It is encrypted and stays on this Pi."
-    fields: dict = {
-        "name": name[:80],
-        "host": host,
-        "username": username[:80],
-        "verify_tls": 1 if form.get("verify_tls") else 0,
-        "auto_apply": int((existing or {}).get("auto_apply") or 0),
-        "keep_settings": 1 if form.get("keep_settings") else 0,
-        "schedule_enabled": int((existing or {}).get("schedule_enabled") or 0),
-        "is_demo": 1 if is_demo else 0,
-        "notes": str(form.get("notes") or "")[:500],
-    }
-    if password:
-        fields["password_enc"] = box.encrypt(password)
-    elif existing is None:
-        fields["password_enc"] = ""
-    return fields, ""
-
-
 def _save_rms(form, db: DB, box: SecretBox) -> str:
     base = str(form.get("base") or "").strip().rstrip("/")
     if not base.startswith("https://"):
@@ -670,22 +410,7 @@ def _rms_preview(db: DB) -> str:
 
 
 def _annotated_backups(db: DB) -> list[dict]:
-    devices = db.devices()
-    rows = []
-    for row in db.backups():
-        item = dict(row)
-        item["compatible"] = []
-        for device in devices:
-            ok, _reason = backup_compatibility(
-                item.get("firmware") or "",
-                device.get("firmware") or "",
-                item.get("product_code") or "",
-                device.get("product_code") or "",
-            )
-            if ok:
-                item["compatible"].append(device)
-        rows.append(item)
-    return rows
+    return [dict(row) for row in db.backups()]
 
 
 def _safe_upload(name: str) -> str:

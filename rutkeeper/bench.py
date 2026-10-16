@@ -1,4 +1,4 @@
-"""Bench for one RUT plugged into the Pi.
+"""Workbench for one RUT plugged into the Pi.
 
 The firmware image and two config files live on the Pi. A watcher pings the
 router address. One install signs in, writes the local firmware, waits for
@@ -202,7 +202,7 @@ class Bench:
         path.write_bytes(content)
         path.chmod(0o600)
         self.db.set_settings({NAME_KEYS[slot]: _safe_name(filename)})
-        self.db.add_event("info", "bench", f"Stored {_safe_name(filename)} on this Pi.")
+        self.db.add_event("info", "workbench", f"Stored {_safe_name(filename)} on this Pi.")
 
     def start_job(self, action: str, typed_password: str, slot: str = "") -> None:
         with self._lock:
@@ -235,11 +235,11 @@ class Bench:
             elif action in {"config1", "config2"}:
                 self._apply_config(action, typed_password)
             else:
-                raise RutosError("Unknown bench action.")
+                raise RutosError("Unknown workbench action.")
         except Exception as exc:  # noqa: BLE001 — show it on the bench
             message = str(exc) or exc.__class__.__name__
             self._set(phase="ready" if self.status.get("http") else "offline", job="", error=message, detail=message)
-            self.db.add_event("error", "bench", message)
+            self.db.add_event("error", "workbench", message)
         finally:
             with self._lock:
                 self._inflight = False
@@ -272,14 +272,14 @@ class Bench:
                     raise
         finally:
             router.close()
-        self.db.add_event("warn", "bench", f"Firmware install started from {name}. Waiting for the router to reboot.")
+        self.db.add_event("warn", "workbench", f"Firmware install started from {name}. Waiting for the router to reboot.")
         self._set(phase="rebooting", step="firmware-reboot", job="firmware", detail="Router is rebooting after firmware.")
         self._wait_until_back()
         self._set(step="firmware-reboot", detail="Signing in again.")
         router, password = self._connect(self._candidates(typed_password))
         router.close()
         self._session_password = password
-        self.db.add_event("info", "bench", "Router is back after the firmware install.")
+        self.db.add_event("info", "workbench", "Router is back after the firmware install.")
         if hold:
             self._set(phase="busy", job="install", step="config", error="", detail="Firmware is in. Applying the selected config.")
             return
@@ -306,7 +306,7 @@ class Bench:
                 router.replace_password(embedded)
         finally:
             router.close()
-        self.db.add_event("warn", "bench", f"Applied {name}. Waiting for the router to come back so the password can be replaced.")
+        self.db.add_event("warn", "workbench", f"Applied {name}. Waiting for the router to come back so the password can be replaced.")
         self._set(phase="rebooting", step="config-reboot", job=slot, detail="Router is rebooting after the config.")
         self._wait_until_back()
         self._set(step="password", detail="Signing in to set the shared password.")
@@ -314,9 +314,9 @@ class Bench:
         try:
             if used != target:
                 how = router.set_admin_password(used, target)
-                self.db.add_event("info", "bench", f"Admin password replaced ({how}). The previous password was not stored.")
+                self.db.add_event("info", "workbench", f"Admin password replaced ({how}). The previous password was not stored.")
             else:
-                self.db.add_event("info", "bench", "Router already accepted the shared password.")
+                self.db.add_event("info", "workbench", "Router already accepted the shared password.")
         finally:
             router.close()
         confirm, _used = self._connect([target])
@@ -324,7 +324,7 @@ class Bench:
         self._session_password = ""
         label = "Config 1" if slot == "config1" else "Config 2"
         self._set(phase="ready", job="", step="done", error="", detail=f"{label} is on. The admin password is now the shared one.")
-        self.db.add_event("info", "bench", f"{label} applied and the admin password is the shared password.")
+        self.db.add_event("info", "workbench", f"{label} applied and the admin password is the shared password.")
 
     def _candidates(self, *extra: str) -> list[str]:
         target = self.secrets.decrypt(self.db.setting("bench_target_password_enc"))
@@ -334,7 +334,7 @@ class Bench:
         passwords = _unique(passwords)
         if not passwords:
             raise RutosError(
-                "Type the password currently on this router. Rutkeeper needs it once to sign in, then replaces it."
+                "Type the password currently on this router. TUA needs it once to sign in, then replaces it."
             )
         if self.db.setting("bench_simulate") == "1":
             used = self.sim.accept(passwords)

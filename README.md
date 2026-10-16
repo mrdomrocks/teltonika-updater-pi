@@ -1,22 +1,22 @@
-# Rutkeeper
+# TUA
 
-Rutkeeper is a bench for a Raspberry Pi. Plug in one Teltonika RUT, and the Pi pings it until the router answers. The firmware image and two config files stay on the Pi. In the browser, type the password on that router, pick Config 1 or Config 2, and press Install. Rutkeeper writes the firmware, waits for the router, applies the config, then sets the admin password to a single password you chose.
+TUA is a workbench for a Raspberry Pi. Plug in one Teltonika RUT, and the Pi pings it until the router answers. The firmware image and two config files stay on the Pi. In the browser, type the password on that router, pick Config 1 or Config 2, and press Install. TUA writes the firmware, waits for the router, applies the config, then sets the admin password to a single password you chose.
 
 The dashboard listens on port **8741**.
 
-## Bench
+## Workbench
 
-1. Open the Bench page and set the router address. A RUT on the cable is usually `192.168.1.1`. Give the Pi an address on that subnet that is not `.1`.
+1. Open the Workbench page and set the router address. A RUT on the cable is usually `192.168.1.1`. Give the Pi an address on that subnet that is not `.1`.
 2. Store the firmware file, Config 1, and Config 2.
 3. Set the password every router should end up with.
-4. If a config file contains its own admin password, type that password next to the file. Rutkeeper needs it to sign back in after the file is applied, then it overwrites it.
+4. If a config file contains its own admin password, type that password next to the file. TUA needs it to sign back in after the file is applied, then it overwrites it.
 5. Plug the router in. The page pings every couple of seconds. When the router answers, the status turns ready, the tab beeps, and a browser alert fires if you allowed alerts.
 6. Type the password that is on **this** router right now (the label, or the factory default `admin01`). That value is not saved.
 7. Pick Config 1 or Config 2 and press Install. The page shows each step: sign in, write the firmware (`/firmware/actions/upload_device_firmware`, settings kept so the same login still works), wait for the reboot, apply the config, wait again, then change the admin password to the shared one. The password that was on the router, and the one inside the config, are not written to disk.
 
-Rutkeeper cannot sign in with no password at all. The password already on the unit is required for that one login. It is held in memory for the job and then discarded.
+TUA cannot sign in with no password at all. The password already on the unit is required for that one login. It is held in memory for the job and then discarded.
 
-The fleet and RMS pages are still there for routers you manage in place rather than on the bench.
+The backups, RMS, and log pages sit beside the workbench.
 
 ## What the search is actually describing
 
@@ -33,17 +33,14 @@ Someone wanted a RUTM10 to look for a new **stable** firmware on the first Monda
 
 Config rollout is separate. A backup applies only to routers with the same product code, and only when their firmware is the same or newer than the firmware the backup was taken on. RMS can push one backup to many devices. On RutOS 7.22 and later there are two backup types; Teltonika R&D has recommended the older **device backup** while the newer configuration backup is still incomplete.
 
-Rutkeeper keeps that sequence on the Pi, started from the bench or a router page, instead of a crontab and an API token on every router.
+TUA keeps that sequence on the Pi, started from the workbench, instead of a crontab and an API token on every router.
 
 ## What it does
 
 - Talks to RutOS 7.06 or newer on the LAN: `POST /api/login`, then the firmware and backup endpoints above.
 - Saves backups on the Pi, with product code, firmware version, and a SHA-256.
-- Pushes a backup only when the product code matches and the file is not from a newer firmware.
-- Installs stable firmware only. A manual install asks you to confirm and takes a backup first.
+- Installs the firmware file stored on the Pi when you press Install on the workbench.
 - Optional RMS path: the same task-group call support published, fired from the Pi when you run it. Use it for routers you cannot reach on the LAN.
-
-Three simulated routers are loaded on first start so the screens are visible before any hardware is added. Remove them from the fleet page when you add real ones.
 
 ## Run it here
 
@@ -79,15 +76,9 @@ To update a system install, pull the new files and run `sudo ./install/install.s
 
 Stop it with `sudo systemctl stop rutkeeper`. Logs: `journalctl -u rutkeeper -f`.
 
-## Add a router
+## On the router
 
-1. On the router, use an admin account. RutOS 7.06 or newer.
-2. In Rutkeeper, add the LAN address (`192.168.1.1` is enough). Leave TLS verification off unless you installed a real certificate on the router.
-3. Check firmware. A waiting stable package shows as “Update waiting”.
-4. Save a device backup before you change anything.
-5. Install from the router page only when you want the reboot. Keep-settings is on by default, which sends the upgrade body support published.
-
-To roll a config out, mark a backup as a profile (or upload one and record its product code and firmware). Push it from the router page or the Backups page. The router reboots, and the admin password inside the file becomes the router password.
+Use an admin account on RutOS 7.06 or newer. On the workbench, set the address (`192.168.1.1` is enough) and type the password that is on that router. Install runs from the workbench when you want the reboot.
 
 ## Tests
 
@@ -98,7 +89,7 @@ To roll a config out, mark a backup as a profile (or upload one and record its p
 
 ## Limits
 
-- Firmware and backup responses vary across RutOS builds. A failed call is stored on the router page, including the router’s error text, rather than treated as success.
-- The stable package is downloaded by the router from Teltonika, not served by the Pi. The router needs its own route to the internet for that step.
-- Rutkeeper will not catch up a window it missed while it was stopped.
+- Firmware and backup responses vary across RutOS builds. A failed call is shown on the workbench, including the router’s error text, rather than treated as success.
+- The firmware file used by Install is the one stored on the Pi.
+- TUA will not catch up a window it missed while it was stopped.
 - This does not replace RMS if the routers are only reachable through the cloud. Use the RMS page for that, with a token from RMS → Account settings → API.

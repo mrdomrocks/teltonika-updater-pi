@@ -1,4 +1,4 @@
-"""Run the Rutkeeper dashboard."""
+"""Run the TUA dashboard."""
 
 from __future__ import annotations
 

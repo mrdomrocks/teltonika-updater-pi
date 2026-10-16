@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf" content="{{ csrf }}">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{% block title %}Fleet{% endblock %} · {{ site_name }}</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/app.css">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail">
+      <a class="brand" href="/">
+        <span class="brand-mark">Rutkeeper</span>
+        <span class="brand-site">{{ site_name }}</span>
+      </a>
+      <p class="clock" data-epoch="{{ now_epoch }}"><span id="clock">{{ now_label }}</span> <span class="muted">{{ zone_label }}</span></p>
+      {% if armed %}
+      <p class="arm arm-on">Updates armed</p>
+      {% else %}
+      <p class="arm">Updates disarmed</p>
+      {% endif %}
+      <nav class="nav">
+        <a href="/" {% if path == "/" %}aria-current="page"{% endif %}>Fleet</a>
+        <a href="/backups" {% if path.startswith("/backups") %}aria-current="page"{% endif %}>Backups</a>
+        <a href="/schedule" {% if path == "/schedule" %}aria-current="page"{% endif %}>Schedule</a>
+        <a href="/rms" {% if path == "/rms" %}aria-current="page"{% endif %}>RMS</a>
+        <a href="/log" {% if path == "/log" %}aria-current="page"{% endif %}>Log</a>
+      </nav>
+      <p class="rail-note">Stable channel only. A backup lands on this Pi before an install. Teltonika does not recommend leaving upgrades unattended.</p>
+      <p class="rail-version">{{ version }}</p>
+    </aside>
+    <main class="main">
+      {% if notice %}
+      <p class="notice" role="status">{{ notice }}</p>
+      {% endif %}
+      {% block body %}{% endblock %}
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

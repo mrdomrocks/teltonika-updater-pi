@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Fleet{% endblock %}
+{% block head %}
+{% if any_busy %}<meta http-equiv="refresh" content="3">{% endif %}
+{% endblock %}
+{% block body %}
+<header class="page-head">
+  <div>
+    <h1>Fleet</h1>
+    <p class="lede">Check the stable firmware channel, keep a device backup on this Pi, and install only when you mean to.</p>
+  </div>
+  <a class="btn primary" href="/devices/new">Add router</a>
+</header>
+
+{% if demo_count %}
+<section class="callout">
+  <div>
+    <h2>Simulated routers</h2>
+    <p>North gate is already on the stable build, Yard pump has a package waiting, and Cold store does not answer. Nothing here leaves the Pi. Remove them when the real routers are in.</p>
+  </div>
+  <form method="post" action="/demos/remove">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="btn quiet" type="submit">Remove simulated routers</button>
+  </form>
+</section>
+{% endif %}
+
+{% if not devices %}
+<section class="empty">
+  <h2>No routers yet</h2>
+  <p>Add a RutOS address on this LAN. Rutkeeper signs in with the router admin account, reads <span class="mono">/firmware/device/updates/status</span>, and stores backups under its own data directory.</p>
+  <a class="btn primary" href="/devices/new">Add the first router</a>
+</section>
+{% else %}
+<div class="table-wrap">
+  <table class="fleet">
+    <thead>
+      <tr>
+        <th>Router</th>
+        <th>Firmware</th>
+        <th>Stable channel</th>
+        <th>Last backup</th>
+        <th>Schedule</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for device in devices %}
+      <tr>
+        <td data-label="Router">
+          <a class="device-link" href="/devices/{{ device.id }}">
+            <span class="device-name">{{ device.name }}</span>
+            <span class="device-meta">{{ device.model or "Model unknown" }}{% if device.product_code %} · {{ device.product_code }}{% endif %}</span>
+            <span class="device-host mono">{{ device.host }}</span>
+          </a>
+        </td>
+        <td data-label="Firmware" class="mono">{{ device.firmware or "—" }}</td>
+        <td data-label="Stable channel">
+          {% if device.busy %}
+          <span class="pill work">{{ busy_labels.get(device.busy_action, "Working") }}</span>
+          {% elif device.update_state == "available" %}
+          <span class="pill wait">Update waiting</span>
+          <span class="sub mono">{{ device.update_version }}</span>
+          {% elif device.update_state == "current" %}
+          <span class="pill ok">On stable</span>
+          {% elif device.update_state == "offline" %}
+          <span class="pill bad">No answer</span>
+          {% else %}
+          <span class="pill">Not checked</span>
+          {% endif %}
+          {% if device.last_error and not device.busy %}
+          <span class="sub error">{{ device.last_error }}</span>
+          {% endif %}
+        </td>
+        <td data-label="Last backup">{{ device.last_backup_at|when }}</td>
+        <td data-label="Schedule">
+          {% if device.schedule_enabled %}
+          <span>In the window</span>
+          {% else %}
+          <span class="muted">Left out</span>
+          {% endif %}
+          {% if device.auto_apply %}
+          <span class="sub">Auto-apply on</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

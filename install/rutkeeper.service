@@ -1,0 +1,26 @@
+[Unit]
+Description=Rutkeeper Teltonika firmware and config keeper
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rutkeeper
+Group=rutkeeper
+WorkingDirectory=/opt/rutkeeper
+Environment=RUTKEEPER_DATA=/var/lib/rutkeeper
+Environment=RUTKEEPER_HOST=0.0.0.0
+Environment=RUTKEEPER_PORT=8741
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/rutkeeper/.venv/bin/python -m rutkeeper
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/rutkeeper
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

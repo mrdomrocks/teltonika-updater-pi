@@ -1,0 +1,41 @@
+<div class="fields">
+  <label>Name
+    <input name="name" required maxlength="80" value="{{ device.name }}" autocomplete="off">
+  </label>
+  <label>Address
+    <input name="host" required value="{{ device.host }}" placeholder="192.168.1.1" autocomplete="off" spellcheck="false">
+  </label>
+  <div class="split">
+    <label>Username
+      <input name="username" required maxlength="80" value="{{ device.username or 'admin' }}" autocomplete="off">
+    </label>
+    <label>Password
+      <input name="password" type="password" {% if creating|default(false) %}required{% endif %} autocomplete="new-password" placeholder="{% if creating|default(false) %}Admin password{% else %}Unchanged if blank{% endif %}">
+    </label>
+  </div>
+  <label class="check">
+    <input type="checkbox" name="verify_tls" value="1" {% if device.verify_tls %}checked{% endif %}>
+    Verify the router TLS certificate
+  </label>
+  <label class="check">
+    <input type="checkbox" name="keep_settings" value="1" {% if device.keep_settings %}checked{% endif %}>
+    Keep settings if firmware is installed
+  </label>
+  <label class="check">
+    <input type="checkbox" name="schedule_enabled" value="1" {% if device.schedule_enabled %}checked{% endif %}>
+    Include in the scheduled window
+  </label>
+  <label class="check">
+    <input type="checkbox" name="auto_apply" value="1" {% if device.auto_apply %}checked{% endif %}>
+    Allow the schedule to install a stable update on this router
+  </label>
+  {% if creating|default(false) %}
+  <label class="check">
+    <input type="checkbox" name="check_after" value="1" checked>
+    Check firmware after saving
+  </label>
+  {% endif %}
+  <label>Notes
+    <textarea name="notes" rows="3" maxlength="500">{{ device.notes }}</textarea>
+  </label>
+</div>

@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Log{% endblock %}
+{% block body %}
+<header class="page-head">
+  <div>
+    <h1>Log</h1>
+    <p class="lede">Checks, backups, installs, and RMS calls, newest first.</p>
+  </div>
+</header>
+{% if not events %}
+<section class="empty">
+  <h2>Nothing recorded yet</h2>
+  <p>A check or a scheduled pass will show up here.</p>
+</section>
+{% else %}
+<div class="table-wrap">
+  <table class="log">
+    <thead>
+      <tr>
+        <th>When</th>
+        <th>Router</th>
+        <th>Action</th>
+        <th>What happened</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for event in events %}
+      <tr>
+        <td data-label="When" class="nowrap">{{ event.created_at|when }}</td>
+        <td data-label="Router">
+          {% if event.device_id and event.device_name %}
+          <a href="/devices/{{ event.device_id }}">{{ event.device_name }}</a>
+          {% else %}
+          <span class="muted">Site</span>
+          {% endif %}
+        </td>
+        <td data-label="Action"><span class="pill {% if event.level == 'error' %}bad{% elif event.level == 'warn' %}wait{% else %}ok{% endif %}">{{ event.action }}</span></td>
+        <td data-label="What happened">{{ event.message }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

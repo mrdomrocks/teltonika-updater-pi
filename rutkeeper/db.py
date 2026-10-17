@@ -29,6 +29,7 @@ DEFAULTS = {
     "last_slot": "",
     "missed_note": "",
     "bench_host": "192.168.1.1",
+    "bench_next_host": "",
     "bench_username": "admin",
     "bench_simulate": "0",
     "bench_target_password_enc": "",

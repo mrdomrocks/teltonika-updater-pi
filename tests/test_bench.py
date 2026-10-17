@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from rutkeeper.bench import FIXED_ADMIN_PASSWORD
+
 
 def _csrf(page) -> str:
     marker = 'name="csrf" value="'
@@ -15,7 +17,12 @@ def test_bench_is_the_front_page(client):
     assert "Config 1" in page.text
     assert "Config 2" in page.text
     assert "Sign in" in page.text
-    assert "Set the shared password" in page.text
+    assert "Set the admin password" in page.text
+    assert "Connect at the new address" in page.text
+    assert "Address after firmware" in page.text
+    assert "Scan the label" in page.text
+    assert 'id="label-photo"' in page.text
+    assert 'name="label-photo"' not in page.text
     assert "North gate" not in page.text
     status = client.get("/bench/status").json()
     assert status["host"] == "192.168.1.1"
@@ -54,13 +61,13 @@ def test_config_replaces_the_router_password_with_the_shared_one(client):
 
     bench.run_inline("config1", "")
     assert bench.sim.config == "config-1.tar.gz"
-    assert bench.sim.admin_password == "shared-secret"
+    assert bench.sim.admin_password == FIXED_ADMIN_PASSWORD
     assert bench._session_password == ""
 
     raw = Path(client.app.state.db.path).read_bytes()
     assert b"label-password" not in raw
     assert b"from-the-file" not in raw
-    assert b"shared-secret" not in raw
+    assert FIXED_ADMIN_PASSWORD.encode() not in raw
     messages = " ".join(event["message"] for event in client.app.state.db.events())
     assert "Admin password replaced" in messages
     assert "label-password" not in messages
@@ -90,10 +97,18 @@ def test_install_writes_firmware_then_config_and_the_shared_password(client):
         files={"file": ("config-1.tar.gz", b"config-bytes", "application/octet-stream")},
     )
     bench = client.app.state.bench
+    bench.db.set_settings({"bench_next_host": "10.20.30.40"})
     bench.run_inline("install", "label-password", "config1")
+    assert bench.sim.actions == [
+        ("password", FIXED_ADMIN_PASSWORD),
+        ("firmware", FIXED_ADMIN_PASSWORD),
+        ("config", FIXED_ADMIN_PASSWORD),
+        ("password", FIXED_ADMIN_PASSWORD),
+    ]
     assert bench.sim.firmware == "RUT2_R_00.07.18.bin"
     assert bench.sim.config == "config-1.tar.gz"
-    assert bench.sim.admin_password == "shared-secret"
+    assert bench.sim.admin_password == FIXED_ADMIN_PASSWORD
+    assert bench.db.setting("bench_host") == "10.20.30.40"
     assert bench._session_password == ""
     assert bench.status["step"] == "done"
     assert bench.status["phase"] == "ready"
@@ -101,7 +116,7 @@ def test_install_writes_firmware_then_config_and_the_shared_password(client):
     raw = Path(client.app.state.db.path).read_bytes()
     assert b"label-password" not in raw
     assert b"from-the-file" not in raw
-    assert b"shared-secret" not in raw
+    assert FIXED_ADMIN_PASSWORD.encode() not in raw
     messages = " ".join(event["message"] for event in client.app.state.db.events())
     assert "Admin password replaced" in messages
     assert "label-password" not in messages

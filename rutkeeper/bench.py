@@ -1,12 +1,11 @@
 """Workbench for one RUT plugged into the Pi.
 
-The firmware image and two config files live on the Pi. A watcher pings the
-router address. One install signs in, writes the local firmware, waits for
-the router, applies Config 1 or Config 2, then replaces the admin password
-with the single password stored on the Pi.
+One install signs in, waits until the router answers, sets the admin password,
+writes the local firmware, then waits for the router's new address and applies
+Config 1 or Config 2.
 
 The password that was already on the router is held in memory for that job
-only. It is not written to the database.
+only. It is not written to the database. The admin password set here is fixed.
 """
 
 from __future__ import annotations
@@ -32,6 +31,8 @@ NAME_KEYS = {
     "config1": "bench_config1_name",
     "config2": "bench_config2_name",
 }
+FIXED_ADMIN_PASSWORD = "Enter@qua1!"
+_HOLD_PHASES = {"busy", "rebooting", "await-address"}
 
 
 class Busy(Exception):
@@ -46,6 +47,7 @@ class SimRouter:
         self.firmware = ""
         self.config = ""
         self.password_changes: list[str] = []
+        self.actions: list[tuple[str, str]] = []
 
     def accept(self, passwords: list[str]) -> str:
         for password in _unique(passwords):
@@ -58,6 +60,7 @@ class SimRouter:
     def upload_firmware(self, filename: str, content: bytes) -> None:
         if not content:
             raise RutosError("Firmware file is empty.")
+        self.actions.append(("firmware", self.admin_password))
         self.firmware = filename
 
     def upgrade_staged(self) -> None:
@@ -72,6 +75,7 @@ class SimRouter:
     def apply_backup(self) -> None:
         if not self.config:
             raise RutosError("No config has been uploaded.")
+        self.actions.append(("config", self.admin_password))
 
     def replace_password(self, password: str) -> None:
         """What a config file does when it carries its own admin password."""
@@ -83,6 +87,7 @@ class SimRouter:
             raise RutosError("Wrong current password.")
         self.admin_password = new
         self.password_changes.append(new)
+        self.actions.append(("password", new))
         return "simulated"
 
     def close(self) -> None:
@@ -154,9 +159,10 @@ class Bench:
         status.update(
             {
                 "host": settings.get("bench_host") or "192.168.1.1",
+                "next_host": settings.get("bench_next_host") or "",
                 "username": settings.get("bench_username") or "admin",
                 "simulate": settings.get("bench_simulate") == "1",
-                "has_target_password": bool(settings.get("bench_target_password_enc")),
+                "has_target_password": True,
                 "firmware_name": settings.get("bench_firmware_name") or "",
                 "config1_name": settings.get("bench_config1_name") or "",
                 "config2_name": settings.get("bench_config2_name") or "",
@@ -169,16 +175,18 @@ class Bench:
         )
         return status
 
-    def save_setup(self, host: str, username: str, target_password: str, simulate: bool) -> None:
-        cleaned = _host_only(host)
+    def save_setup(self, host: str, username: str, next_host: str, simulate: bool) -> None:
         values = {
-            "bench_host": cleaned,
+            "bench_host": _host_only(host),
+            "bench_next_host": _optional_host(next_host),
             "bench_username": (username or "admin").strip()[:80] or "admin",
             "bench_simulate": "1" if simulate else "0",
         }
-        if target_password:
-            values["bench_target_password_enc"] = self.secrets.encrypt(target_password)
         self.db.set_settings(values)
+        with self._lock:
+            inflight = self._inflight
+        if inflight:
+            return
         if simulate:
             self._mark(ping=True, http=True, rtt_ms=1, detail="Simulated router is ready.")
         else:
@@ -249,22 +257,50 @@ class Bench:
             raise RutosError("Select Config 1 or Config 2.")
         if not self._path(slot).exists():
             raise RutosError("Store that config on the Pi before installing.")
-        self._flash(typed_password, hold=True)
-        self._apply_config(slot, typed_password)
+        if not self._path("firmware").exists():
+            raise RutosError("Store a firmware file on the Pi first.")
+        self._sign_in(typed_password)
+        self._set_fixed_password()
+        self._flash(FIXED_ADMIN_PASSWORD, hold=True, reconnect=False)
+        self._await_new_address()
+        self._apply_config(slot, FIXED_ADMIN_PASSWORD)
 
-    def _flash(self, typed_password: str, *, hold: bool = False) -> None:
+    def _sign_in(self, typed_password: str) -> None:
+        self._set(step="login", detail="Signing in.")
+        router, password = self._connect(self._candidates(typed_password))
+        router.close()
+        self._session_password = password
+        self._set(step="ready", detail="Router answered.")
+
+    def _set_fixed_password(self) -> None:
+        self._set(step="password", detail="Setting the admin password.")
+        router, used = self._connect(self._candidates(self._session_password))
+        try:
+            if used != FIXED_ADMIN_PASSWORD:
+                how = router.set_admin_password(used, FIXED_ADMIN_PASSWORD)
+                self.db.add_event("info", "workbench", f"Admin password replaced ({how}). The previous password was not stored.")
+            else:
+                self.db.add_event("info", "workbench", "Router already had the fixed admin password.")
+        finally:
+            router.close()
+        self._session_password = FIXED_ADMIN_PASSWORD
+        confirm, _used = self._connect([FIXED_ADMIN_PASSWORD])
+        confirm.close()
+
+    def _flash(self, typed_password: str, *, hold: bool = False, reconnect: bool = True) -> None:
         path = self._path("firmware")
         if not path.exists():
             raise RutosError("Store a firmware file on the Pi first.")
         name = self.db.setting("bench_firmware_name") or "firmware.bin"
         content = path.read_bytes()
-        self._set(step="login", detail="Signing in.")
+        if not self._session_password:
+            self._set(step="login", detail="Signing in.")
         router, password = self._connect(self._candidates(typed_password))
         self._session_password = password
         try:
             self._set(step="firmware", detail=f"Uploading {name}.")
             router.upload_firmware(name, content)
-            self._set(step="firmware", detail="Starting the firmware install. Settings stay so this login still works.")
+            self._set(step="firmware", detail="Starting the firmware install. Settings stay, including the admin password.")
             try:
                 router.upgrade_staged()
             except RutosError as exc:
@@ -273,7 +309,9 @@ class Bench:
         finally:
             router.close()
         self.db.add_event("warn", "workbench", f"Firmware install started from {name}. Waiting for the router to reboot.")
-        self._set(phase="rebooting", step="firmware-reboot", job="firmware", detail="Router is rebooting after firmware.")
+        self._set(phase="rebooting", step="firmware-reboot", job=self.status.get("job") or "firmware", detail="Router is rebooting after firmware.")
+        if not reconnect:
+            return
         self._wait_until_back()
         self._set(step="firmware-reboot", detail="Signing in again.")
         router, password = self._connect(self._candidates(typed_password))
@@ -285,18 +323,48 @@ class Bench:
             return
         self._set(phase="ready", job="", step="done", error="", detail="Firmware is in. The router answered again.")
 
+    def _await_new_address(self) -> None:
+        self._set(
+            phase="await-address",
+            step="new-address",
+            job="install",
+            error="",
+            detail="The router has a new address. Enter it and save. The config waits for that address.",
+        )
+        if self.db.setting("bench_simulate") == "1":
+            nxt = _optional_host(self.db.setting("bench_next_host") or "")
+            if nxt:
+                self.db.set_settings({"bench_host": nxt})
+            self._set(detail="Simulated router is back on its new address.")
+            return
+        deadline = time.monotonic() + 30 * 60
+        while time.monotonic() < deadline:
+            nxt = _optional_host(self.db.setting("bench_next_host") or "")
+            if not nxt:
+                self._set(detail="The router has a new address. Enter it and save. The config waits for that address.")
+                time.sleep(2)
+                continue
+            ping_ok, http_ok, rtt = probe(nxt)
+            self._note_probe(ping_ok, http_ok, rtt)
+            if http_ok:
+                self.db.set_settings({"bench_host": nxt})
+                self._set(detail=f"Router answered at {nxt}.")
+                self.db.add_event("info", "workbench", f"Router answered at {nxt} after the firmware install.")
+                return
+            self._set(detail=f"Waiting for {nxt}.")
+            time.sleep(3)
+        raise RutosError("The router did not answer on the new address within 30 minutes.")
+
     def _apply_config(self, slot: str, typed_password: str) -> None:
         path = self._path(slot)
         if not path.exists():
             raise RutosError("Store that config file on the Pi first.")
-        target = self.secrets.decrypt(self.db.setting("bench_target_password_enc"))
-        if not target:
-            raise RutosError("Set the password every router should end up with before applying a config.")
+        target = FIXED_ADMIN_PASSWORD
         name = self.db.setting(NAME_KEYS[slot]) or slot
         content = path.read_bytes()
         embedded_key = "bench_config1_password_enc" if slot == "config1" else "bench_config2_password_enc"
         embedded = self.secrets.decrypt(self.db.setting(embedded_key))
-        self._set(step="config", detail=f"Signing in to apply {name}.")
+        self._set(phase="busy", job="install" if self.status.get("job") == "install" else slot, step="config", error="", detail=f"Signing in to apply {name}.")
         router, password = self._connect(self._candidates(typed_password, embedded))
         try:
             self._set(step="config", detail=f"Uploading {name}.")
@@ -306,29 +374,28 @@ class Bench:
                 router.replace_password(embedded)
         finally:
             router.close()
-        self.db.add_event("warn", "workbench", f"Applied {name}. Waiting for the router to come back so the password can be replaced.")
-        self._set(phase="rebooting", step="config-reboot", job=slot, detail="Router is rebooting after the config.")
+        self.db.add_event("warn", "workbench", f"Applied {name}. Waiting for the router to come back.")
+        self._set(phase="rebooting", step="config", detail="Router is rebooting after the config.")
         self._wait_until_back()
-        self._set(step="password", detail="Signing in to set the shared password.")
+        self._set(step="config", detail="Signing in to confirm the admin password.")
         router, used = self._connect(self._candidates(typed_password, embedded, password))
         try:
             if used != target:
                 how = router.set_admin_password(used, target)
                 self.db.add_event("info", "workbench", f"Admin password replaced ({how}). The previous password was not stored.")
             else:
-                self.db.add_event("info", "workbench", "Router already accepted the shared password.")
+                self.db.add_event("info", "workbench", "Router already had the fixed admin password.")
         finally:
             router.close()
         confirm, _used = self._connect([target])
         confirm.close()
         self._session_password = ""
         label = "Config 1" if slot == "config1" else "Config 2"
-        self._set(phase="ready", job="", step="done", error="", detail=f"{label} is on. The admin password is now the shared one.")
-        self.db.add_event("info", "workbench", f"{label} applied and the admin password is the shared password.")
+        self._set(phase="ready", job="", step="done", error="", detail=f"{label} is on. The admin password is set.")
+        self.db.add_event("info", "workbench", f"{label} applied and the admin password is set.")
 
     def _candidates(self, *extra: str) -> list[str]:
-        target = self.secrets.decrypt(self.db.setting("bench_target_password_enc"))
-        return _unique([*extra, self._session_password, target])
+        return _unique([*extra, self._session_password])
 
     def _connect(self, passwords: list[str]):
         passwords = _unique(passwords)
@@ -385,7 +452,7 @@ class Bench:
     def _probe_once(self) -> None:
         if self.db.setting("bench_simulate") == "1":
             phase = str(self.status.get("phase") or "offline")
-            if phase in {"busy", "rebooting"}:
+            if phase in _HOLD_PHASES:
                 return
             current = str(self.status.get("detail") or "")
             keep = phase == "ready" and current and not current.startswith("Plug the router")
@@ -397,7 +464,7 @@ class Bench:
             )
             return
         phase = str(self.status.get("phase") or "offline")
-        if phase in {"busy", "rebooting"}:
+        if phase in _HOLD_PHASES:
             return
         host = _host_only(self.db.setting("bench_host") or "192.168.1.1")
         ping_ok, http_ok, rtt = probe(host)
@@ -412,10 +479,19 @@ class Bench:
     def _mark(self, *, ping: bool, http: bool, rtt_ms: int | None, detail: str) -> None:
         with self._lock:
             phase = str(self.status.get("phase") or "offline")
-            if phase not in {"busy", "rebooting"}:
+            if phase not in _HOLD_PHASES:
                 self.status["phase"] = "ready" if http else "offline"
-                if phase not in {"busy", "rebooting"} and detail:
+                if detail:
                     self.status["detail"] = detail
+            self.status["ping"] = ping
+            self.status["http"] = http
+            self.status["rtt_ms"] = rtt_ms
+            if http and not self._was_http:
+                self.status["ready_tick"] = int(self.status.get("ready_tick") or 0) + 1
+            self._was_http = http
+
+    def _note_probe(self, ping: bool, http: bool, rtt_ms: int | None) -> None:
+        with self._lock:
             self.status["ping"] = ping
             self.status["http"] = http
             self.status["rtt_ms"] = rtt_ms
@@ -472,6 +548,13 @@ def connect_host(host: str) -> str:
     """Validate a bench address and return the host without a scheme."""
     api_base(host if "://" in host or host.startswith("demo") else "https://" + host)
     return _host_only(host)
+
+
+def _optional_host(host: str) -> str:
+    text = (host or "").strip()
+    if not text:
+        return ""
+    return _host_only(text)
 
 
 def _host_only(host: str) -> str:

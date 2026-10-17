@@ -1,10 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Workbench{% endblock %}
+{% block head %}
+<script src="/static/jsQR.js"></script>
+<script src="/static/label.js"></script>
+{% endblock %}
 {% block body %}
 <header class="page-head">
   <div>
     <h1>Workbench</h1>
-    <p class="lede">Plug a RUT into this Pi. When it answers, type its current password, pick a config, and install. TUA writes the firmware stored here, waits for the router, applies that config, then sets the shared password.</p>
+    <p class="lede">Plug a RUT into this Pi. When it answers, sign in with its current password. TUA sets the admin password, writes the firmware, waits for the router’s new address, then applies the config.</p>
   </div>
 </header>
 
@@ -18,11 +22,12 @@
   <button class="btn quiet" type="button" id="bench-notify">Allow ready alerts</button>
   <ol class="install-steps" id="install-steps">
     <li data-step="login">Sign in</li>
+    <li data-step="ready">Wait for the router</li>
+    <li data-step="password">Set the admin password</li>
     <li data-step="firmware">Write firmware</li>
-    <li data-step="firmware-reboot">Wait for the router</li>
+    <li data-step="firmware-reboot">Wait for reboot</li>
+    <li data-step="new-address">Connect at the new address</li>
     <li data-step="config">Apply the selected config</li>
-    <li data-step="config-reboot">Wait for the router again</li>
-    <li data-step="password">Set the shared password</li>
   </ol>
 </section>
 
@@ -31,11 +36,16 @@
   <input type="hidden" name="action" value="install">
   <h2>Install</h2>
   <div class="fields">
-    <label>Password on this router right now
-      <input name="current_password" type="password" autocomplete="off" placeholder="Label or current admin password">
-    </label>
+    <div class="password-row">
+      <label>Password on this router right now
+        <input id="current-password" name="current_password" type="password" autocomplete="off" placeholder="Label or current admin password">
+      </label>
+      <button class="btn quiet scan-btn" type="button" id="scan-label">Scan the label</button>
+    </div>
+    <input id="label-photo" class="scan-input" type="file" accept="image/*" capture="environment" tabindex="-1" aria-hidden="true">
   </div>
-  <p class="hint">Used once to sign in. It is not saved. After the config is on, the admin password becomes the shared one, including any password that was inside the config file.</p>
+  <p class="hint" id="scan-status" role="status"></p>
+  <p class="hint">Used once to sign in. It is not saved. On a phone, Scan the label opens the camera on the QR code printed on the router. TUA then sets the admin password to Enter@qua1!, writes the firmware, and applies the config after the router is back on its new address.</p>
   <fieldset class="choices">
     <legend>Config to apply after the firmware</legend>
     {% set pick = "config1" if bench.config1_ready else ("config2" if bench.config2_ready else "") %}
@@ -62,19 +72,20 @@
 <div class="detail">
   <form class="card form" method="post" action="/bench/setup">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <h2>Router and shared password</h2>
+    <h2>Router</h2>
     <div class="fields">
+      <label id="next-host-label">Address after firmware
+        <input id="next-host" name="next_host" value="{{ bench.next_host }}" spellcheck="false" autocomplete="off" placeholder="Enter this when the router comes back">
+      </label>
+      <p class="hint">The address changes when the firmware finishes. Leave this blank until you know it. Install waits here before applying the config.</p>
       <div class="split">
-        <label>Address
+        <label>Address now
           <input name="host" required value="{{ bench.host }}" spellcheck="false" autocomplete="off">
         </label>
         <label>Username
           <input name="username" required value="{{ bench.username }}" autocomplete="off">
         </label>
       </div>
-      <label>Password every router should end up with
-        <input name="target_password" type="password" autocomplete="new-password" placeholder="{% if bench.has_target_password %}Saved. Type a new one to replace it.{% else %}Choose one password{% endif %}">
-      </label>
       <label class="check">
         <input type="checkbox" name="simulate" value="1" {% if bench.simulate %}checked{% endif %}>
         Simulate a router on this address
@@ -116,6 +127,15 @@
       <button class="btn quiet" type="submit">Store {{ title }}</button>
     </form>
     {% endfor %}
+  </div>
+</div>
+
+<div class="scan-overlay" id="scan-overlay" hidden aria-hidden="true">
+  <div class="scan-panel">
+    <h2>Scan the label</h2>
+    <p class="hint">Point the camera at the QR code on the router.</p>
+    <video id="scan-video" playsinline autoplay muted></video>
+    <button class="btn quiet" type="button" id="scan-cancel">Cancel</button>
   </div>
 </div>
 {% endblock %}

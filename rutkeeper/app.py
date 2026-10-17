@@ -147,10 +147,16 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             host = connect_host(str(form.get("host") or "192.168.1.1"))
         except RutosError as exc:
             return redirect("/", str(exc))
+        try:
+            next_host = str(form.get("next_host") or "")
+            if next_host.strip():
+                next_host = connect_host(next_host)
+        except RutosError as exc:
+            return redirect("/", str(exc))
         bench.save_setup(
             host,
             str(form.get("username") or "admin"),
-            str(form.get("target_password") or ""),
+            next_host,
             bool(form.get("simulate")),
         )
         db.add_event("info", "workbench", "Workbench setup saved.")

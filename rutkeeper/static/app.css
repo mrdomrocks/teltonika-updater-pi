@@ -169,6 +169,48 @@ p { margin: 0; }
 }
 .btn.primary { background: var(--blue); color: #fff; }
 .btn.primary:hover { background: #0838b0; color: #fff; }
+.password-row { display: flex; gap: 0.6rem; align-items: flex-end; }
+.password-row > label { flex: 1; min-width: 0; }
+.scan-btn { margin-bottom: 0; min-height: 2.55rem; }
+.scan-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+#scan-status:empty { display: none; margin: 0; }
+#scan-status.ok { color: var(--green); }
+#scan-status.bad { color: var(--red); }
+.scan-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(41, 60, 91, 0.55);
+}
+.scan-overlay[hidden] { display: none; }
+.scan-panel {
+  width: min(100%, 28rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  background: #fff;
+  border-radius: 4px;
+  padding: 1rem;
+}
+.scan-panel video {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  background: #111;
+  border-radius: 2px;
+}
 .btn.quiet { background: #fff; color: var(--blue); border-color: var(--blue); }
 .btn.quiet:hover { background: #e8efff; color: var(--blue); }
 .btn.danger { background: #fff; color: var(--red); border-color: #f3c3bd; }
@@ -328,7 +370,8 @@ details summary { cursor: pointer; font-weight: 600; }
   box-shadow: var(--shadow);
 }
 .hero[data-phase="ready"] { border-color: #b7e0c4; }
-.hero[data-phase="busy"], .hero[data-phase="rebooting"] { border-color: #c5d4f8; }
+.hero[data-phase="busy"], .hero[data-phase="rebooting"], .hero[data-phase="await-address"] { border-color: #c5d4f8; }
+.attention input { border-color: var(--blue); box-shadow: 0 0 0 3px #e8efff; }
 .hero-kicker {
   margin: 0;
   letter-spacing: 0.12em;
@@ -426,7 +469,9 @@ details summary { cursor: pointer; font-weight: 600; }
   .nav { flex-direction: row; flex-wrap: wrap; }
   .main { padding: 1.1rem 0.9rem 2.5rem; }
   .page-head, .callout { flex-direction: column; align-items: flex-start; }
-  .detail, .split, .facts, .choices, .install-steps { grid-template-columns: 1fr; }
+  .detail, .split, .facts, .choices, .install-steps, .password-row { grid-template-columns: 1fr; }
+  .password-row { flex-direction: column; align-items: stretch; }
+  .scan-btn { width: 100%; }
   table.fleet, table.log { border: 0; }
   table.fleet thead, table.log thead { display: none; }
   table.fleet tr, table.log tr {

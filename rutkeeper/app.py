@@ -174,8 +174,8 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             if slot in {"config1", "config2"} and str(form.get("inside_password") or ""):
                 bench.save_config_password(slot, str(form.get("inside_password") or ""))
         except RutosError as exc:
-            return redirect("/", str(exc))
-        return redirect("/", "File stored on this Pi.")
+            return redirect("/backups", str(exc))
+        return redirect("/backups", "File stored on this Pi.")
 
     @app.post("/bench/run")
     async def bench_run(request: Request):
@@ -195,7 +195,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
 
     @app.get("/backups")
     def backups_page(request: Request) -> HTMLResponse:
-        return render(request, "backups.html", backups=_annotated_backups(db), error="")
+        return render(request, "backups.html", backups=_annotated_backups(db), bench=bench.snapshot(), error="")
 
     @app.post("/backups")
     async def upload_backup(request: Request):
@@ -207,14 +207,15 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         firmware = str(form.get("firmware") or "").strip()
         profile_name = str(form.get("profile_name") or "").strip()
         if not content:
-            return render(request, "backups.html", backups=_annotated_backups(db), error="Choose a backup file.", status=400)
+            return render(request, "backups.html", backups=_annotated_backups(db), bench=bench.snapshot(), error="Choose a backup file.", status=400)
         if len(content) > 32 * 1024 * 1024:
-            return render(request, "backups.html", backups=_annotated_backups(db), error="Backup files must be 32 MB or smaller.", status=400)
+            return render(request, "backups.html", backups=_annotated_backups(db), bench=bench.snapshot(), error="Backup files must be 32 MB or smaller.", status=400)
         if not product or not firmware:
             return render(
                 request,
                 "backups.html",
                 backups=_annotated_backups(db),
+                bench=bench.snapshot(),
                 error="Product code and firmware version are required.",
                 status=400,
             )

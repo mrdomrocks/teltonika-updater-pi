@@ -23,6 +23,15 @@ def test_bench_is_the_front_page(client):
     assert "Scan the label" in page.text
     assert 'id="label-photo"' in page.text
     assert 'name="label-photo"' not in page.text
+    assert "Files" in page.text
+    assert ">Backups<" not in page.text
+    assert "Store firmware" not in page.text
+    files = client.get("/backups")
+    assert files.status_code == 200
+    assert "Files" in files.text
+    assert "Store firmware" in files.text
+    assert "Store Config 1" in files.text
+    assert "Store Config 2" in files.text
     assert "North gate" not in page.text
     status = client.get("/bench/status").json()
     assert status["host"] == "192.168.1.1"

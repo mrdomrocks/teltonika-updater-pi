@@ -9,6 +9,7 @@ User=rutkeeper
 Group=rutkeeper
 WorkingDirectory=/opt/rutkeeper
 Environment=RUTKEEPER_DATA=/var/lib/rutkeeper
+Environment=RUTKEEPER_FILES=/boot/firmware
 Environment=RUTKEEPER_HOST=0.0.0.0
 Environment=RUTKEEPER_PORT=8741
 Environment=PYTHONDONTWRITEBYTECODE=1

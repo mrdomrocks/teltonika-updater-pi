@@ -21,7 +21,7 @@ from rutkeeper.firmware import human_size
 from rutkeeper.rms import parse_id_list, summarize_devices, task_group_body
 from rutkeeper.rms import RmsClient, RmsError
 from rutkeeper.rutos import RutosError
-from rutkeeper.bench import Bench, connect_host
+from rutkeeper.bench import Bench, connect_host, files_root
 from rutkeeper.bench import Busy as BenchBusy
 from rutkeeper.worker import Runner
 
@@ -64,7 +64,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     box = SecretBox(data / "secret.key")
     runner = Runner(db, box, data / "backups")
     runner.demo_delay = float(os.environ.get("RUTKEEPER_DEMO_DELAY", "0.5"))
-    bench = Bench(db, box, data / "bench")
+    bench = Bench(db, box, files_root(data))
     watch = os.environ.get("RUTKEEPER_DISABLE_SCHEDULER") != "1"
 
     env = Environment(
@@ -162,21 +162,6 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         db.add_event("info", "workbench", "Workbench setup saved.")
         return redirect("/", "Workbench setup saved.")
 
-    @app.post("/bench/file")
-    async def bench_file(request: Request):
-        form = await posted(request)
-        slot = str(form.get("slot") or "")
-        upload = form.get("file")
-        filename = getattr(upload, "filename", "") or ""
-        content = await upload.read() if upload is not None and hasattr(upload, "read") else b""
-        try:
-            bench.store_file(slot, filename, content)
-            if slot in {"config1", "config2"} and str(form.get("inside_password") or ""):
-                bench.save_config_password(slot, str(form.get("inside_password") or ""))
-        except RutosError as exc:
-            return redirect("/files", str(exc))
-        return redirect("/files", "File stored on this Pi.")
-
     @app.post("/bench/run")
     async def bench_run(request: Request):
         form = await posted(request)
@@ -193,14 +178,6 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             return redirect("/", "The workbench is already working on this router.")
         return redirect("/", "Job started.")
 
-    @app.get("/files")
-    def files_page(request: Request) -> HTMLResponse:
-        return render(request, "files.html", bench=bench.snapshot(), error="")
-
-    @app.get("/backups")
-    def backups_page() -> RedirectResponse:
-        return RedirectResponse("/files", status_code=303)
-
     @app.post("/backups")
     async def upload_backup(request: Request):
         form = await posted(request)
@@ -211,17 +188,11 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         firmware = str(form.get("firmware") or "").strip()
         profile_name = str(form.get("profile_name") or "").strip()
         if not content:
-            return render(request, "files.html", bench=bench.snapshot(), error="Choose a backup file.", status=400)
+            return redirect("/", "Choose a backup file.")
         if len(content) > 32 * 1024 * 1024:
-            return render(request, "files.html", bench=bench.snapshot(), error="Backup files must be 32 MB or smaller.", status=400)
+            return redirect("/", "Backup files must be 32 MB or smaller.")
         if not product or not firmware:
-            return render(
-                request,
-                "files.html",
-                bench=bench.snapshot(),
-                error="Product code and firmware version are required.",
-                status=400,
-            )
+            return redirect("/", "Product code and firmware version are required.")
         import hashlib
 
         digest = hashlib.sha256(content).hexdigest()
@@ -245,7 +216,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             }
         )
         db.add_event("info", "backup", f"Uploaded backup {profile_name or filename} for {product}.")
-        return redirect("/backups", "Backup stored on this Pi.")
+        return redirect("/", "Backup stored on this Pi.")
 
     @app.post("/backups/{backup_id}/profile")
     async def mark_profile(request: Request, backup_id: int) -> RedirectResponse:
@@ -256,7 +227,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         name = str(form.get("profile_name") or row.get("filename") or "Profile").strip()
         enabled = 1 if form.get("is_profile") else 0
         db.update_backup(backup_id, {"is_profile": enabled, "profile_name": name if enabled else row.get("profile_name") or ""})
-        return redirect("/backups", "Backup updated.")
+        return redirect("/", "Backup updated.")
 
     @app.post("/backups/{backup_id}/delete")
     async def delete_backup(request: Request, backup_id: int) -> RedirectResponse:
@@ -266,7 +237,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             path = data / "backups" / row["stored_name"]
             if path.exists():
                 path.unlink()
-        return redirect("/backups", "Backup deleted.")
+        return redirect("/", "Backup deleted.")
 
     @app.get("/backups/{backup_id}/download")
     def download_backup(backup_id: int) -> FileResponse:

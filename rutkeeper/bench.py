@@ -21,15 +21,10 @@ from rutkeeper.crypto import SecretBox
 from rutkeeper.db import DB
 from rutkeeper.rutos import RutosClient, RutosError, api_base
 
-SLOTS = {
-    "firmware": "firmware.bin",
-    "config1": "config-1.bin",
-    "config2": "config-2.bin",
-}
-NAME_KEYS = {
-    "firmware": "bench_firmware_name",
-    "config1": "bench_config1_name",
-    "config2": "bench_config2_name",
+FOLDERS = {
+    "firmware": "Firmware",
+    "config1": "Config 1",
+    "config2": "Config 2",
 }
 FIXED_ADMIN_PASSWORD = "Enter@qua1!"
 _HOLD_PHASES = {"busy", "rebooting", "await-address"}
@@ -124,6 +119,7 @@ class Bench:
         self.directory = directory
         self.directory.mkdir(parents=True, exist_ok=True)
         self.sim = SimRouter()
+        self._ensure_folders()
         self._session_password = ""
         self._lock = threading.Lock()
         self._inflight = False
@@ -163,14 +159,15 @@ class Bench:
                 "username": settings.get("bench_username") or "admin",
                 "simulate": settings.get("bench_simulate") == "1",
                 "has_target_password": True,
-                "firmware_name": settings.get("bench_firmware_name") or "",
-                "config1_name": settings.get("bench_config1_name") or "",
-                "config2_name": settings.get("bench_config2_name") or "",
+                "files_root": str(self.directory),
+                "firmware_name": self._name("firmware"),
+                "config1_name": self._name("config1"),
+                "config2_name": self._name("config2"),
                 "config1_has_password": bool(settings.get("bench_config1_password_enc")),
                 "config2_has_password": bool(settings.get("bench_config2_password_enc")),
-                "firmware_ready": self._path("firmware").exists(),
-                "config1_ready": self._path("config1").exists(),
-                "config2_ready": self._path("config2").exists(),
+                "firmware_ready": self.chosen("firmware") is not None,
+                "config1_ready": self.chosen("config1") is not None,
+                "config2_ready": self.chosen("config2") is not None,
             }
         )
         return status
@@ -197,20 +194,6 @@ class Bench:
             raise RutosError("Choose config 1 or config 2.")
         key = "bench_config1_password_enc" if slot == "config1" else "bench_config2_password_enc"
         self.db.set_settings({key: self.secrets.encrypt(password) if password else ""})
-
-    def store_file(self, slot: str, filename: str, content: bytes) -> None:
-        if slot not in SLOTS:
-            raise RutosError("Unknown file slot.")
-        limit = 80 * 1024 * 1024 if slot == "firmware" else 32 * 1024 * 1024
-        if not content:
-            raise RutosError("That file is empty.")
-        if len(content) > limit:
-            raise RutosError("That file is too large to store on this Pi.")
-        path = self._path(slot)
-        path.write_bytes(content)
-        path.chmod(0o600)
-        self.db.set_settings({NAME_KEYS[slot]: _safe_name(filename)})
-        self.db.add_event("info", "workbench", f"Stored {_safe_name(filename)} on this Pi.")
 
     def start_job(self, action: str, typed_password: str, slot: str = "") -> None:
         with self._lock:
@@ -255,10 +238,10 @@ class Bench:
     def _install(self, typed_password: str, slot: str) -> None:
         if slot not in {"config1", "config2"}:
             raise RutosError("Select Config 1 or Config 2.")
-        if not self._path(slot).exists():
-            raise RutosError("Store that config on the Pi before installing.")
-        if not self._path("firmware").exists():
-            raise RutosError("Store a firmware file on the Pi first.")
+        if self.chosen(slot) is None:
+            raise RutosError(f"Put a config file in the {FOLDERS[slot]} folder.")
+        if self.chosen("firmware") is None:
+            raise RutosError("Put a firmware file in the Firmware folder.")
         self._sign_in(typed_password)
         self._set_fixed_password()
         self._flash(FIXED_ADMIN_PASSWORD, hold=True, reconnect=False)
@@ -288,10 +271,10 @@ class Bench:
         confirm.close()
 
     def _flash(self, typed_password: str, *, hold: bool = False, reconnect: bool = True) -> None:
-        path = self._path("firmware")
-        if not path.exists():
-            raise RutosError("Store a firmware file on the Pi first.")
-        name = self.db.setting("bench_firmware_name") or "firmware.bin"
+        path = self.chosen("firmware")
+        if path is None:
+            raise RutosError("Put a firmware file in the Firmware folder.")
+        name = path.name
         content = path.read_bytes()
         if not self._session_password:
             self._set(step="login", detail="Signing in.")
@@ -356,11 +339,11 @@ class Bench:
         raise RutosError("The router did not answer on the new address within 30 minutes.")
 
     def _apply_config(self, slot: str, typed_password: str) -> None:
-        path = self._path(slot)
-        if not path.exists():
-            raise RutosError("Store that config file on the Pi first.")
+        path = self.chosen(slot)
+        if path is None:
+            raise RutosError(f"Put a config file in the {FOLDERS.get(slot, 'config')} folder.")
         target = FIXED_ADMIN_PASSWORD
-        name = self.db.setting(NAME_KEYS[slot]) or slot
+        name = path.name
         content = path.read_bytes()
         embedded_key = "bench_config1_password_enc" if slot == "config1" else "bench_config2_password_enc"
         embedded = self.secrets.decrypt(self.db.setting(embedded_key))
@@ -515,8 +498,25 @@ class Bench:
         if delay > 0:
             time.sleep(min(delay, 3))
 
-    def _path(self, slot: str) -> Path:
-        return self.directory / SLOTS[slot]
+    def _ensure_folders(self) -> None:
+        for name in FOLDERS.values():
+            try:
+                (self.directory / name).mkdir(parents=True, exist_ok=True)
+            except OSError:
+                continue
+
+    def chosen(self, slot: str) -> Path | None:
+        folder = self.directory / FOLDERS[slot]
+        if not folder.is_dir():
+            return None
+        files = [path for path in folder.iterdir() if path.is_file() and not path.name.startswith(".")]
+        if not files:
+            return None
+        return max(files, key=lambda path: (path.stat().st_mtime, path.name))
+
+    def _name(self, slot: str) -> str:
+        path = self.chosen(slot)
+        return path.name if path else ""
 
 
 def probe(host: str) -> tuple[bool, bool, int | None]:
@@ -542,6 +542,12 @@ def probe(host: str) -> tuple[bool, bool, int | None]:
         except OSError:
             continue
     return ping_ok, http_ok, rtt
+
+
+def files_root(data: Path) -> Path:
+    """Parent of the Firmware, Config 1, and Config 2 folders."""
+    env = os.environ.get("RUTKEEPER_FILES")
+    return Path(env) if env else data
 
 
 def connect_host(host: str) -> str:

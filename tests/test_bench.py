@@ -1,6 +1,13 @@
+import os
 from pathlib import Path
 
 from rutkeeper.bench import FIXED_ADMIN_PASSWORD
+
+
+def _drop(client, folder: str, name: str, content: bytes) -> None:
+    path = client.app.state.bench.directory / folder
+    path.mkdir(parents=True, exist_ok=True)
+    (path / name).write_bytes(content)
 
 
 def _csrf(page) -> str:
@@ -8,6 +15,18 @@ def _csrf(page) -> str:
     start = page.text.index(marker) + len(marker)
     end = page.text.index('"', start)
     return page.text[start:end]
+
+
+def test_newest_file_in_a_folder_is_used(client):
+    _drop(client, "Firmware", "old.bin", b"old")
+    newer = client.app.state.bench.directory / "Firmware" / "new.bin"
+    newer.write_bytes(b"new")
+    os.utime(client.app.state.bench.directory / "Firmware" / "old.bin", (1, 1))
+    os.utime(newer, (2, 2))
+    status = client.get("/bench/status").json()
+    assert status["firmware_name"] == "new.bin"
+    assert status["firmware_ready"] is True
+    assert status["config1_ready"] is False
 
 
 def test_bench_is_the_front_page(client):
@@ -23,19 +42,9 @@ def test_bench_is_the_front_page(client):
     assert "Scan the label" in page.text
     assert 'id="label-photo"' in page.text
     assert 'name="label-photo"' not in page.text
-    assert "Files" in page.text
-    assert ">Backups<" not in page.text
-    assert "Store firmware" not in page.text
-    files = client.get("/files")
-    assert files.status_code == 200
-    assert "Files" in files.text
-    assert "Store firmware" in files.text
-    assert "Store Config 1" in files.text
-    assert "Store Config 2" in files.text
-    assert 'href="/files"' in client.get("/").text
-    old = client.get("/backups", follow_redirects=False)
-    assert old.status_code == 303
-    assert old.headers["location"] == "/files"
+    assert 'href="/files"' not in page.text
+    assert "Firmware folder" in page.text
+    assert client.get("/files").status_code == 404
     assert "North gate" not in page.text
     status = client.get("/bench/status").json()
     assert status["host"] == "192.168.1.1"
@@ -57,17 +66,10 @@ def test_config_replaces_the_router_password_with_the_shared_one(client):
         follow_redirects=False,
     )
     assert saved.status_code == 303
-    client.post(
-        "/bench/file",
-        data={"csrf": token, "slot": "firmware"},
-        files={"file": ("RUT2_R_00.07.18.bin", b"firmware-bytes", "application/octet-stream")},
-    )
-    client.post(
-        "/bench/file",
-        data={"csrf": token, "slot": "config1", "inside_password": "from-the-file"},
-        files={"file": ("config-1.tar.gz", b"config-bytes", "application/octet-stream")},
-    )
+    _drop(client, "Firmware", "RUT2_R_00.07.18.bin", b"firmware-bytes")
+    _drop(client, "Config 1", "config-1.tar.gz", b"config-bytes")
     bench = client.app.state.bench
+    bench.save_config_password("config1", "from-the-file")
     bench.run_inline("firmware", "label-password")
     assert bench.sim.firmware == "RUT2_R_00.07.18.bin"
     assert bench.sim.admin_password == "label-password"
@@ -99,17 +101,10 @@ def test_install_writes_firmware_then_config_and_the_shared_password(client):
             "simulate": "1",
         },
     )
-    client.post(
-        "/bench/file",
-        data={"csrf": token, "slot": "firmware"},
-        files={"file": ("RUT2_R_00.07.18.bin", b"firmware-bytes", "application/octet-stream")},
-    )
-    client.post(
-        "/bench/file",
-        data={"csrf": token, "slot": "config1", "inside_password": "from-the-file"},
-        files={"file": ("config-1.tar.gz", b"config-bytes", "application/octet-stream")},
-    )
+    _drop(client, "Firmware", "RUT2_R_00.07.18.bin", b"firmware-bytes")
+    _drop(client, "Config 1", "config-1.tar.gz", b"config-bytes")
     bench = client.app.state.bench
+    bench.save_config_password("config1", "from-the-file")
     bench.db.set_settings({"bench_next_host": "10.20.30.40"})
     bench.run_inline("install", "label-password", "config1")
     assert bench.sim.actions == [
@@ -147,11 +142,7 @@ def test_install_without_the_config_file_does_not_flash(client):
             "simulate": "1",
         },
     )
-    client.post(
-        "/bench/file",
-        data={"csrf": token, "slot": "firmware"},
-        files={"file": ("rut.bin", b"firmware-bytes", "application/octet-stream")},
-    )
+    _drop(client, "Firmware", "rut.bin", b"firmware-bytes")
     bench = client.app.state.bench
     bench.run_inline("install", "label-password", "config1")
     assert bench.sim.firmware == ""
@@ -177,11 +168,7 @@ def test_flash_without_a_password_is_refused(client):
         "/bench/setup",
         data={"csrf": token, "host": "192.168.1.1", "username": "admin", "simulate": "1"},
     )
-    client.post(
-        "/bench/file",
-        data={"csrf": token, "slot": "firmware"},
-        files={"file": ("rut.bin", b"firmware-bytes", "application/octet-stream")},
-    )
+    _drop(client, "Firmware", "rut.bin", b"firmware-bytes")
     client.app.state.bench.run_inline("firmware", "")
     assert client.app.state.bench.sim.firmware == ""
     messages = " ".join(event["message"] for event in client.app.state.db.events())

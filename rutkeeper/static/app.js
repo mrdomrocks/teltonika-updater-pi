@@ -113,8 +113,8 @@
       if (hint && data.phase === "await-address") {
         hint.textContent = "Enter the router’s new address and save. The config is applied when that address answers.";
       } else if (hint && !busy && !data.error) {
-        if (!data.firmware_ready) hint.textContent = "Store a firmware file first.";
-        else if (!data.config1_ready && !data.config2_ready) hint.textContent = "Store Config 1 or Config 2.";
+        if (!data.firmware_ready) hint.textContent = "Put a firmware file in the Firmware folder.";
+        else if (!data.config1_ready && !data.config2_ready) hint.textContent = "Put a config file in the Config 1 or Config 2 folder.";
         else if (!data.http) hint.textContent = "Waiting for the router to answer.";
         else if (!typed) hint.textContent = "Type this router’s current password or scan its label, pick a config, then install.";
         else if (!configReady) hint.textContent = "Pick Config 1 or Config 2.";

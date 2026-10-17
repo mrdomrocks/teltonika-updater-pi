@@ -53,18 +53,19 @@
       <input type="radio" name="config" value="config1" {% if pick == "config1" %}checked{% endif %} {% if not bench.config1_ready %}disabled{% endif %}>
       <span>
         <strong>Config 1</strong>
-        <span class="hint">{% if bench.config1_name %}{{ bench.config1_name }}{% else %}Not stored yet{% endif %}</span>
+        <span class="hint">{% if bench.config1_name %}{{ bench.config1_name }}{% else %}No file in the Config 1 folder{% endif %}</span>
       </span>
     </label>
     <label class="choice">
       <input type="radio" name="config" value="config2" {% if pick == "config2" %}checked{% endif %} {% if not bench.config2_ready %}disabled{% endif %}>
       <span>
         <strong>Config 2</strong>
-        <span class="hint">{% if bench.config2_name %}{{ bench.config2_name }}{% else %}Not stored yet{% endif %}</span>
+        <span class="hint">{% if bench.config2_name %}{{ bench.config2_name }}{% else %}No file in the Config 2 folder{% endif %}</span>
       </span>
     </label>
   </fieldset>
-  <p class="hint" id="install-files">Firmware: {% if bench.firmware_name %}<span class="mono">{{ bench.firmware_name }}</span>{% else %}not stored yet{% endif %}</p>
+  <p class="hint" id="install-files">Firmware: {% if bench.firmware_name %}<span class="mono">{{ bench.firmware_name }}</span>{% else %}no file in the Firmware folder{% endif %}</p>
+  <p class="hint">Copy the files onto the card before you start. Firmware goes in <span class="mono">{{ bench.files_root }}/Firmware</span>. Each config goes in <span class="mono">{{ bench.files_root }}/Config 1</span> or <span class="mono">{{ bench.files_root }}/Config 2</span>. When a folder has more than one file, the newest is used.</p>
   <p class="hint" id="install-hint">Type this router’s current password, pick a config, then install.</p>
   <button class="btn primary install" type="submit" id="install-button" disabled>Install</button>
 </form>

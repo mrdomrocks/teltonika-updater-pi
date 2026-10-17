@@ -27,6 +27,13 @@ else
 fi
 
 mkdir -p "$PREFIX" "$DATA/backups"
+if [[ -d /boot/firmware ]]; then
+  FILE_ROOT="/boot/firmware"
+else
+  FILE_ROOT="$DATA"
+fi
+mkdir -p "$FILE_ROOT/Firmware" "$FILE_ROOT/Config 1" "$FILE_ROOT/Config 2"
+chmod 0775 "$FILE_ROOT/Firmware" "$FILE_ROOT/Config 1" "$FILE_ROOT/Config 2" || true
 rm -rf "$PREFIX/rutkeeper"
 cp -a "$ROOT/rutkeeper" "$PREFIX/rutkeeper"
 cp "$ROOT/requirements.txt" "$PREFIX/requirements.txt"
@@ -54,6 +61,7 @@ User=rutkeeper
 Group=rutkeeper
 WorkingDirectory=$PREFIX
 Environment=RUTKEEPER_DATA=$DATA
+Environment=RUTKEEPER_FILES=$FILE_ROOT
 Environment=RUTKEEPER_HOST=0.0.0.0
 Environment=RUTKEEPER_PORT=8741
 Environment=PYTHONDONTWRITEBYTECODE=1

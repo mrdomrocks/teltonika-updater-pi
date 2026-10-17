@@ -26,12 +26,16 @@ def test_bench_is_the_front_page(client):
     assert "Files" in page.text
     assert ">Backups<" not in page.text
     assert "Store firmware" not in page.text
-    files = client.get("/backups")
+    files = client.get("/files")
     assert files.status_code == 200
     assert "Files" in files.text
     assert "Store firmware" in files.text
     assert "Store Config 1" in files.text
     assert "Store Config 2" in files.text
+    assert 'href="/files"' in client.get("/").text
+    old = client.get("/backups", follow_redirects=False)
+    assert old.status_code == 303
+    assert old.headers["location"] == "/files"
     assert "North gate" not in page.text
     status = client.get("/bench/status").json()
     assert status["host"] == "192.168.1.1"

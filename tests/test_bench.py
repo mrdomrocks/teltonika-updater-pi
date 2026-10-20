@@ -50,8 +50,10 @@ def test_bench_is_the_front_page(client):
     assert "Connect at the new address" in page.text
     assert "Address after firmware" in page.text
     assert "Scan the label" in page.text
-    assert 'id="label-photo"' in page.text
-    assert 'name="label-photo"' not in page.text
+    assert 'id="scan-overlay"' in page.text
+    assert 'id="scan-video"' in page.text
+    assert 'id="label-photo"' not in page.text
+    assert "live camera" in page.text
     assert 'href="/files"' not in page.text
     assert "Firmware folder" in page.text
     assert client.get("/files").status_code == 404

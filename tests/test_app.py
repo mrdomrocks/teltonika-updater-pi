@@ -3,13 +3,6 @@ from datetime import datetime
 from rutkeeper.firmware import backup_compatibility
 
 
-def _csrf(page) -> str:
-    marker = 'name="csrf" value="'
-    start = page.text.index(marker) + len(marker)
-    end = page.text.index('"', start)
-    return page.text[start:end]
-
-
 def test_fleet_is_gone(client):
     page = client.get("/fleet")
     assert page.status_code == 404
@@ -90,22 +83,10 @@ def test_schedule_page_is_gone(client):
     assert "Schedule" not in client.get("/").text
 
 
-def test_rms_preview_matches_the_support_script(client):
-    page = client.get("/rms")
-    token = _csrf(page)
-    saved = client.post(
-        "/rms",
-        data={
-            "csrf": token,
-            "action": "save",
-            "base": "https://api.rms.teltonika-networks.com",
-            "group_id": "task_group_id",
-            "device_ids": "2006385",
-            "task_ids": "11, 12, 13",
-        },
-        follow_redirects=True,
-    )
-    assert saved.status_code == 200
-    assert "device_id" in saved.text
-    assert "2006385" in saved.text
-    assert "Bearer [redacted]" in saved.text
+def test_rms_page_is_gone(client):
+    assert client.get("/rms").status_code == 404
+    home = client.get("/")
+    assert "RMS" not in home.text
+    assert 'href="/rms"' not in home.text
+    log = client.get("/log")
+    assert "RMS" not in log.text

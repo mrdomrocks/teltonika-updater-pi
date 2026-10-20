@@ -18,10 +18,8 @@ from rutkeeper import __version__
 from rutkeeper.crypto import SecretBox
 from rutkeeper.db import DB
 from rutkeeper.firmware import human_size
-from rutkeeper.rms import parse_id_list, summarize_devices, task_group_body
-from rutkeeper.rms import RmsClient, RmsError
 from rutkeeper.rutos import RutosError
-from rutkeeper.bench import Bench, access_token_note_path, connect_host, files_root, read_access_token_note
+from rutkeeper.bench import Bench, connect_host, files_root
 from rutkeeper.bench import Busy as BenchBusy
 from rutkeeper.worker import Runner
 
@@ -102,8 +100,6 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             zone_label=now.tzname() or "local",
             now_epoch=int(now.timestamp() * 1000),
             path=request.url.path,
-            access_token_note=read_access_token_note(bench.directory),
-            access_token_path=str(access_token_note_path(bench.directory)),
             **ctx,
         )
         return HTMLResponse(html, status_code=status)
@@ -178,6 +174,8 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             bench.start_job(action, str(form.get("current_password") or ""), slot)
         except BenchBusy:
             return redirect("/", "The workbench is already working on this router.")
+        except RutosError as exc:
+            return redirect("/", str(exc))
         return redirect("/", "Job started.")
 
     @app.post("/backups")
@@ -251,80 +249,6 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             raise HTTPException(404, "Backup file is missing.")
         return FileResponse(path, filename=row["filename"], media_type="application/octet-stream")
 
-    @app.get("/rms")
-    def rms_page(request: Request) -> HTMLResponse:
-        return render(request, "rms.html", error="", result="", tasks="", preview=_rms_preview(db))
-
-    @app.post("/rms")
-    async def rms_action(request: Request):
-        form = await posted(request)
-        action = str(form.get("action") or "save")
-        error = _save_rms(form, db, box)
-        if error:
-            return render(request, "rms.html", error=error, result="", tasks="", preview=_rms_preview(db), status=400)
-        if action == "save":
-            db.add_event("info", "rms", "Saved RMS settings.")
-            return redirect("/rms", "RMS settings saved.")
-        token = box.decrypt(db.setting("rms_token_enc"))
-        if not token:
-            return render(
-                request,
-                "rms.html",
-                error="Add an RMS access token first.",
-                result="",
-                tasks="",
-                preview=_rms_preview(db),
-                status=400,
-            )
-        client = RmsClient(token, db.setting("rms_base"))
-        try:
-            if action == "test":
-                payload = client.list_devices()
-                count, names = summarize_devices(payload)
-                if count is None:
-                    result = "Token accepted. RMS did not return a device list this call understands."
-                else:
-                    shown = ", ".join(names) if names else "no names in the first page"
-                    result = f"Token accepted. {count} device{'s' if count != 1 else ''} visible. {shown}."
-                db.add_event("info", "rms", "RMS token accepted.")
-                return render(request, "rms.html", error="", result=result, tasks="", preview=_rms_preview(db))
-            if action == "tasks":
-                payload = client.list_tasks()
-                return render(
-                    request,
-                    "rms.html",
-                    error="",
-                    result="",
-                    tasks=json.dumps(payload, indent=2)[:12000],
-                    preview=_rms_preview(db),
-                )
-            if action == "run":
-                if form.get("confirm") != "1":
-                    return render(
-                        request,
-                        "rms.html",
-                        error="Confirm the task group before running it. It can install firmware.",
-                        result="",
-                        tasks="",
-                        preview=_rms_preview(db),
-                        status=400,
-                    )
-                runner.run_rms(scheduled=False)
-                return redirect("/rms", "RMS task group sent.")
-        except (RmsError, ValueError) as exc:
-            return render(
-                request,
-                "rms.html",
-                error=str(exc),
-                result="",
-                tasks="",
-                preview=_rms_preview(db),
-                status=400,
-            )
-        finally:
-            client.close()
-        return redirect("/rms")
-
     @app.get("/log")
     def log_page(request: Request) -> HTMLResponse:
         return render(request, "log.html", events=db.events(limit=200))
@@ -342,54 +266,6 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     app.add_exception_handler(404, http_error)
 
     return app
-
-
-def _save_rms(form, db: DB, box: SecretBox) -> str:
-    base = str(form.get("base") or "").strip().rstrip("/")
-    if not base.startswith("https://"):
-        return "The RMS API host must be an https URL."
-    group = str(form.get("group_id") or "").strip()
-    if group and not group.replace("-", "").replace("_", "").isalnum():
-        return "The task group id should be the id from the RMS task group URL."
-    try:
-        parse_id_list(str(form.get("device_ids") or ""))
-        parse_id_list(str(form.get("task_ids") or ""))
-    except ValueError:
-        return "RMS device ids and task ids must be numbers, separated by commas."
-    values = {
-        "rms_base": base,
-        "rms_group_id": group,
-        "rms_device_ids": str(form.get("device_ids") or "").strip(),
-        "rms_task_ids": str(form.get("task_ids") or "").strip(),
-        "rms_in_schedule": "0",
-    }
-    if form.get("clear_token"):
-        values["rms_token_enc"] = ""
-    else:
-        token = str(form.get("token") or "").strip()
-        if token:
-            values["rms_token_enc"] = box.encrypt(token)
-    db.set_settings(values)
-    return ""
-
-
-def _rms_preview(db: DB) -> str:
-    settings = db.settings()
-    try:
-        body = task_group_body(
-            parse_id_list(settings.get("rms_device_ids") or ""),
-            parse_id_list(settings.get("rms_task_ids") or ""),
-        )
-    except ValueError:
-        return ""
-    group = settings.get("rms_group_id") or "{task_group_id}"
-    base = settings.get("rms_base") or "https://api.rms.teltonika-networks.com"
-    return (
-        f"POST {base}/devices/tasks/groups/{group}\n"
-        "Authorization: Bearer [redacted]\n"
-        "Content-Type: application/json\n\n"
-        + json.dumps(body, indent=2)
-    )
 
 
 def _annotated_backups(db: DB) -> list[dict]:

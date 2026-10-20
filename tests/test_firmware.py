@@ -9,7 +9,6 @@ from rutkeeper.firmware import (
     schedule_due,
     upgrade_body,
 )
-from rutkeeper.rms import parse_id_list, task_group_body
 
 
 def test_newest_stable_means_current():
@@ -78,13 +77,3 @@ def test_progress_phase():
     assert progress_phase({"_http_status": 404}) == "missing"
     assert progress_phase({"data": {"status": "failed"}}) == "error"
 
-
-def test_rms_task_group_body():
-    assert task_group_body([2006385], [11, 12]) == {
-        "device_id": [2006385],
-        "tasks": [
-            {"task_id": 11, "variables": []},
-            {"task_id": 12, "variables": []},
-        ],
-    }
-    assert parse_id_list("2006385, 2006386") == [2006385, 2006386]

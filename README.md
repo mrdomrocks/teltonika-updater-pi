@@ -71,7 +71,23 @@ A user install, without systemd, goes into `~/.local/rutkeeper`:
 
 Do not publish port 8741 to the internet. The Pi stores router admin passwords. Limit the port to your management LAN.
 
-To update a system install, pull the new files and run `sudo ./install/install.sh` again. The data directory is left in place.
+To update a system install from Cursor, not from GitHub:
+
+```bash
+sudo apt-get install -y git ca-certificates
+sudo git clone --origin cursor --branch cursor/remove-rms-lan-actions-3854 \
+  https://origin.cursor.com/git/mrdomrocks/teltonika-updater-pi.git \
+  /opt/rutkeeper-src
+sudo /opt/rutkeeper-src/install/update.sh cursor/remove-rms-lan-actions-3854
+```
+
+That fetches the branch, installs it to `/opt/rutkeeper`, and restarts the service. Router passwords and the firmware and config folders are left in place. The next update reuses that branch:
+
+```bash
+sudo /opt/rutkeeper-src/install/update.sh
+```
+
+Pass `main` when that branch should be what the Pi runs. `RUTKEEPER_GIT_REMOTE` overrides the Cursor URL.
 
 Stop it with `sudo systemctl stop rutkeeper`. Logs: `journalctl -u rutkeeper -f`.
 

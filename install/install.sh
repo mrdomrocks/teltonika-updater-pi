@@ -34,6 +34,9 @@ else
 fi
 mkdir -p "$FILE_ROOT/Firmware" "$FILE_ROOT/Config 1" "$FILE_ROOT/Config 2"
 chmod 0775 "$FILE_ROOT/Firmware" "$FILE_ROOT/Config 1" "$FILE_ROOT/Config 2" || true
+if [[ "$MODE" == "system" ]] && command -v systemctl >/dev/null 2>&1; then
+  systemctl stop rutkeeper.service 2>/dev/null || true
+fi
 rm -rf "$PREFIX/rutkeeper"
 cp -a "$ROOT/rutkeeper" "$PREFIX/rutkeeper"
 cp "$ROOT/requirements.txt" "$PREFIX/requirements.txt"

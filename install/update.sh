@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Update TUA on a Raspberry Pi from the Cursor git remote. GitHub is not used.
+# Update TUA on a Raspberry Pi from GitHub.
 #
 #   sudo ./install/update.sh
-#   sudo ./install/update.sh cursor/remove-rms-lan-actions-3854
+#   sudo ./install/update.sh main
 #   ./install/update.sh --user
 #
 # The first run with no ref uses main. After that, the ref is remembered in
 # the source checkout and the next run fetches the same one.
 set -euo pipefail
 
-REMOTE="${RUTKEEPER_GIT_REMOTE:-https://origin.cursor.com/git/mrdomrocks/teltonika-updater-pi.git}"
+REMOTE="${RUTKEEPER_GIT_REMOTE:-https://github.com/mrdomrocks/teltonika-updater-pi.git}"
 MODE="system"
 REF=""
 for arg in "$@"; do
@@ -51,23 +51,29 @@ fi
 
 mkdir -p "$(dirname "$SRC")"
 if [[ ! -d "$SRC/.git" ]]; then
-  git clone --origin cursor "$REMOTE" "$SRC"
+  git clone --origin origin "$REMOTE" "$SRC"
 else
-  if git -C "$SRC" remote get-url cursor >/dev/null 2>&1; then
-    git -C "$SRC" remote set-url cursor "$REMOTE"
+  if git -C "$SRC" remote get-url origin >/dev/null 2>&1; then
+    git -C "$SRC" remote set-url origin "$REMOTE"
   else
-    git -C "$SRC" remote add cursor "$REMOTE"
+    git -C "$SRC" remote add origin "$REMOTE"
+  fi
+  if git -C "$SRC" remote get-url cursor >/dev/null 2>&1; then
+    git -C "$SRC" remote remove cursor
   fi
 fi
 
-if [[ -z "$REF" && -f "$SRC/.cursor-ref" ]]; then
+if [[ -z "$REF" && -f "$SRC/.update-ref" ]]; then
+  REF="$(tr -d '[:space:]' < "$SRC/.update-ref")"
+elif [[ -z "$REF" && -f "$SRC/.cursor-ref" ]]; then
   REF="$(tr -d '[:space:]' < "$SRC/.cursor-ref")"
 fi
 REF="${REF:-${RUTKEEPER_GIT_REF:-main}}"
 
-git -C "$SRC" fetch cursor "$REF"
+git -C "$SRC" fetch origin "$REF"
 git -C "$SRC" checkout --detach --force FETCH_HEAD
-printf '%s\n' "$REF" > "$SRC/.cursor-ref"
+printf '%s\n' "$REF" > "$SRC/.update-ref"
+rm -f "$SRC/.cursor-ref"
 
 echo "Installing $(git -C "$SRC" rev-parse --short HEAD) from $REMOTE ($REF)."
 if [[ "$MODE" == "user" ]]; then

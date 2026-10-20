@@ -130,12 +130,14 @@
     }
 
     var scanStatus = document.getElementById("scan-status");
-    var photoInput = document.getElementById("label-photo");
+    var scanHint = document.getElementById("scan-live-hint");
     var scanButton = document.getElementById("scan-label");
     var overlay = document.getElementById("scan-overlay");
     var video = document.getElementById("scan-video");
     var scanStream = null;
-    var scanTimer = 0;
+    var scanFrame = 0;
+    var scanBusy = false;
+    var scanNext = 0;
     var liveDetector = null;
     var scanCanvas = document.createElement("canvas");
     var scanContext = scanCanvas.getContext("2d", { willReadFrequently: true });
@@ -147,16 +149,22 @@
       if (kind) scanStatus.classList.add(kind);
     };
 
+    var setScanHint = function (text) {
+      if (scanHint) scanHint.textContent = text || "Point the camera at the QR code on the router.";
+    };
+
     var applyLabel = function (raw) {
-      if (!window.TUALabel) return;
+      if (!window.TUALabel) return false;
       var parsed;
       try {
         parsed = window.TUALabel.parseLabel(raw);
       } catch (error) {
-        setScanStatus(window.TUALabel.message(error && error.code), "bad");
-        return;
+        var message = window.TUALabel.message(error && error.code);
+        setScanStatus(message, "bad");
+        setScanHint(message + " Keep the label in view.");
+        return false;
       }
-      if (!passwordField || !parsed.password) return;
+      if (!passwordField || !parsed.password) return false;
       passwordField.value = parsed.password;
       passwordField.dispatchEvent(new Event("input", { bubbles: true }));
       var username = document.querySelector('input[name="username"]');
@@ -165,12 +173,13 @@
         note += " Username on the label is " + parsed.username + ".";
       }
       setScanStatus(note, "ok");
+      return true;
     };
 
     var readCode = function (source, width, height, sx, sy, sw, sh) {
       if (!window.jsQR || !scanContext) return "";
       var longEdge = Math.max(sw, sh);
-      var scale = Math.min(1, 1800 / longEdge);
+      var scale = Math.min(1, 1280 / longEdge);
       var w = Math.max(1, Math.round(sw * scale));
       var h = Math.max(1, Math.round(sh * scale));
       scanCanvas.width = w;
@@ -182,9 +191,10 @@
     };
 
     var readBitmap = function (source, width, height) {
+      if (!width || !height) return "";
       var found = readCode(source, width, height, 0, 0, width, height);
       if (found) return found;
-      var crop = 0.62;
+      var crop = 0.7;
       var sw = Math.max(1, Math.round(width * crop));
       var sh = Math.max(1, Math.round(height * crop));
       var sx = Math.round((width - sw) / 2);
@@ -192,39 +202,12 @@
       return readCode(source, width, height, sx, sy, sw, sh);
     };
 
-    if (photoInput) {
-      photoInput.addEventListener("change", function () {
-        var file = photoInput.files && photoInput.files[0];
-        photoInput.value = "";
-        if (!file || !window.TUALabel) return;
-        setScanStatus("Reading the label…", "");
-        var finish = function (raw) {
-          if (!raw) {
-            setScanStatus(window.TUALabel.message("no-code"), "bad");
-            return;
-          }
-          applyLabel(raw);
-        };
-        createImageBitmap(file).then(function (bitmap) {
-          var native = window.BarcodeDetector
-            ? new BarcodeDetector({ formats: ["qr_code"] }).detect(bitmap).then(function (codes) {
-              return codes && codes[0] && codes[0].rawValue ? codes[0].rawValue : "";
-            }).catch(function () { return ""; })
-            : Promise.resolve("");
-          return native.then(function (raw) {
-            var found = raw || readBitmap(bitmap, bitmap.width, bitmap.height);
-            if (bitmap.close) bitmap.close();
-            finish(found);
-          });
-        }).catch(function () {
-          setScanStatus(window.TUALabel.message("unreadable"), "bad");
-        });
-      });
-    }
-
     var stopLive = function () {
-      window.clearInterval(scanTimer);
-      scanTimer = 0;
+      if (scanFrame) {
+        window.cancelAnimationFrame(scanFrame);
+        scanFrame = 0;
+      }
+      scanBusy = false;
       if (scanStream) {
         scanStream.getTracks().forEach(function (track) { track.stop(); });
         scanStream = null;
@@ -235,51 +218,82 @@
         overlay.setAttribute("aria-hidden", "true");
       }
       liveDetector = null;
+      setScanHint("Point the camera at the QR code on the router.");
     };
 
-    var tickLive = function () {
-      if (!video || video.readyState < 2) return;
+    var onCode = function (raw) {
+      if (!raw) return;
+      if (applyLabel(raw)) stopLive();
+    };
+
+    var tickLive = function (now) {
+      scanFrame = window.requestAnimationFrame(tickLive);
+      if (scanBusy || !video || video.readyState < 2) return;
+      if (now < scanNext) return;
+      scanNext = now + 250;
+      scanBusy = true;
+      var done = function (raw) {
+        scanBusy = false;
+        onCode(raw);
+      };
+      var withJsQR = function () {
+        done(readBitmap(video, video.videoWidth, video.videoHeight));
+      };
       if (liveDetector) {
         liveDetector.detect(video).then(function (codes) {
           var value = codes && codes[0] && codes[0].rawValue;
-          if (!value) return;
-          stopLive();
-          applyLabel(value);
-        }).catch(function () { return null; });
+          if (value) done(value);
+          else withJsQR();
+        }).catch(withJsQR);
         return;
       }
-      var raw = readBitmap(video, video.videoWidth, video.videoHeight);
-      if (raw) {
-        stopLive();
-        applyLabel(raw);
-      }
+      withJsQR();
+    };
+
+    var openCamera = function (constraints) {
+      return navigator.mediaDevices.getUserMedia(constraints);
     };
 
     if (scanButton) {
       scanButton.addEventListener("click", function () {
-        var live = window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
-        if (!live) {
-          if (photoInput) photoInput.click();
+        if (!window.isSecureContext) {
+          var httpsUrl = "https://" + window.location.host + window.location.pathname;
+          setScanStatus("Live scanning needs HTTPS. Open " + httpsUrl + " and allow the camera.", "bad");
           return;
         }
-        navigator.mediaDevices.getUserMedia({
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          setScanStatus("This browser cannot open the camera for a live scan.", "bad");
+          return;
+        }
+        setScanStatus("Opening the camera…", "");
+        setScanHint("Point the camera at the QR code on the router.");
+        openCamera({
           audio: false,
-          video: { facingMode: { ideal: "environment" } }
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }
+        }).catch(function () {
+          return openCamera({ audio: false, video: true });
         }).then(function (stream) {
           scanStream = stream;
           if (video) {
+            video.setAttribute("playsinline", "true");
+            video.muted = true;
             video.srcObject = stream;
-            video.play();
+            var play = video.play();
+            if (play && play.catch) play.catch(function () { return null; });
           }
           liveDetector = window.BarcodeDetector ? new BarcodeDetector({ formats: ["qr_code"] }) : null;
           if (overlay) {
             overlay.hidden = false;
             overlay.setAttribute("aria-hidden", "false");
           }
-          scanTimer = window.setInterval(tickLive, 400);
+          setScanStatus("Scanning for the label…", "");
+          scanFrame = window.requestAnimationFrame(tickLive);
         }).catch(function () {
-          setScanStatus("The camera did not open. Take a photo of the QR code instead.", "bad");
-          if (photoInput) photoInput.click();
+          setScanStatus("The camera did not open. Allow camera access, then try Scan the label again.", "bad");
         });
       });
     }

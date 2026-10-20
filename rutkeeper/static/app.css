@@ -172,16 +172,6 @@ p { margin: 0; }
 .password-row { display: flex; gap: 0.6rem; align-items: flex-end; }
 .password-row > label { flex: 1; min-width: 0; }
 .scan-btn { margin-bottom: 0; min-height: 2.55rem; }
-.scan-input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  border: 0;
-}
 #scan-status:empty { display: none; margin: 0; }
 #scan-status.ok { color: var(--green); }
 #scan-status.bad { color: var(--red); }
@@ -204,12 +194,26 @@ p { margin: 0; }
   border-radius: 4px;
   padding: 1rem;
 }
+.scan-stage {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 2px;
+  background: #111;
+}
 .scan-panel video {
+  display: block;
   width: 100%;
   aspect-ratio: 3 / 4;
   object-fit: cover;
   background: #111;
-  border-radius: 2px;
+}
+.scan-frame {
+  position: absolute;
+  inset: 18% 16%;
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.28);
+  pointer-events: none;
 }
 .btn.quiet { background: #fff; color: var(--blue); border-color: var(--blue); }
 .btn.quiet:hover { background: #e8efff; color: var(--blue); }

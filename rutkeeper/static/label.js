@@ -9,9 +9,9 @@
   var messages = {
     empty: "That code was empty.",
     "no-password": "That label has no device password. Type the password printed on the router.",
-    unrecognized: "That code is not a router label. Photograph the QR code on the device.",
-    "no-code": "No QR code was found in that photo. Hold the phone steady and fill the frame with the label.",
-    "unreadable": "That photo could not be read. Take another picture of the QR code."
+    unrecognized: "That code is not a router label. Point the camera at the QR code on the device.",
+    "no-code": "No QR code yet. Hold the phone steady and fill the frame with the label.",
+    "unreadable": "That code could not be read. Hold steady on the QR code."
   };
 
   function splitUnescaped(text, sep) {

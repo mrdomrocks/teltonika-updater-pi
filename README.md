@@ -10,7 +10,7 @@ The dashboard listens on port **8741**.
 2. Store the firmware file, Config 1, and Config 2.
 3. Set the password every router should end up with.
 4. If a config file contains its own admin password, type that password next to the file. TUA needs it to sign back in after the file is applied, then it overwrites it.
-5. Type the password that is on **this** router right now (the label, or the factory default `admin01`). That value is not saved. Pick Config 1 or Config 2.
+5. Type the password that is on **this** router right now, or press **Scan the label** on a phone to read the QR code live. That value is not saved. Pick Config 1 or Config 2.
 6. Plug the router in. The page pings every couple of seconds. When the router answers on the LAN, the status turns ready, the tab beeps, a browser alert fires if you allowed alerts, and Install starts. If the router is already answering, press Install.
 7. The page shows each step: sign in, write the firmware (`/firmware/actions/upload_device_firmware`, settings kept so the same login still works), wait for the reboot, apply the config, wait again, then change the admin password to the shared one. The password that was on the router, and the one inside the config, are not written to disk. None of this starts while the router is silent on the LAN.
 
@@ -51,7 +51,7 @@ python3 -m venv .venv
 
 Open http://127.0.0.1:8741
 
-Set `RUTKEEPER_HOST`, `RUTKEEPER_PORT`, and `RUTKEEPER_DATA` to change the bind address, port, and data directory. Passwords are encrypted with a key created in that directory.
+Set `RUTKEEPER_HOST`, `RUTKEEPER_PORT`, and `RUTKEEPER_DATA` to change the bind address, port, and data directory. Passwords are encrypted with a key created in that directory. Binding away from localhost turns on HTTPS automatically so phones can use the live label scanner; set `RUTKEEPER_TLS=0` to force plain HTTP.
 
 ## Install on a Raspberry Pi
 
@@ -61,7 +61,7 @@ Raspberry Pi OS Bookworm or newer, on the same LAN as the routers.
 sudo ./install/install.sh
 ```
 
-That installs to `/opt/rutkeeper`, keeps data in `/var/lib/rutkeeper`, and starts a systemd service bound to `0.0.0.0:8741`. Then open `http://<pi-address>:8741` from a machine on that LAN.
+That installs to `/opt/rutkeeper`, keeps data in `/var/lib/rutkeeper`, and starts a systemd service bound to `0.0.0.0:8741` with HTTPS. Open `https://<pi-address>:8741` from a machine on that LAN and accept the self-signed certificate once. Phones need that HTTPS page before **Scan the label** can open the camera and fill the password from the QR code.
 
 A user install, without systemd, goes into `~/.local/rutkeeper`:
 

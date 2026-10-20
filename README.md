@@ -92,4 +92,4 @@ Use an admin account on RutOS 7.06 or newer. On the workbench, set the address (
 - Firmware and backup responses vary across RutOS builds. A failed call is shown on the workbench, including the router’s error text, rather than treated as success.
 - The firmware file used by Install is the one stored on the Pi.
 - TUA will not catch up a window it missed while it was stopped.
-- This does not replace RMS if the routers are only reachable through the cloud. Use the RMS page for that, with a token from RMS → Account settings → API.
+- This does not replace RMS if the routers are only reachable through the cloud. Use the RMS page for that, with a token from RMS → Account settings → API. The scopes to select are in the `Access Token` folder, in `Access Token.txt`.

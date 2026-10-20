@@ -32,8 +32,8 @@ if [[ -d /boot/firmware ]]; then
 else
   FILE_ROOT="$DATA"
 fi
-mkdir -p "$FILE_ROOT/Firmware" "$FILE_ROOT/Config 1" "$FILE_ROOT/Config 2"
-chmod 0775 "$FILE_ROOT/Firmware" "$FILE_ROOT/Config 1" "$FILE_ROOT/Config 2" || true
+mkdir -p "$FILE_ROOT/Firmware" "$FILE_ROOT/Config 1" "$FILE_ROOT/Config 2" "$FILE_ROOT/Access Token"
+chmod 0775 "$FILE_ROOT/Firmware" "$FILE_ROOT/Config 1" "$FILE_ROOT/Config 2" "$FILE_ROOT/Access Token" || true
 rm -rf "$PREFIX/rutkeeper"
 cp -a "$ROOT/rutkeeper" "$PREFIX/rutkeeper"
 cp "$ROOT/requirements.txt" "$PREFIX/requirements.txt"
@@ -43,6 +43,7 @@ if [[ ! -x "$PREFIX/.venv/bin/python" ]]; then
 fi
 "$PREFIX/.venv/bin/pip" install --upgrade pip
 "$PREFIX/.venv/bin/pip" install -r "$PREFIX/requirements.txt"
+PYTHONPATH="$PREFIX" "$PREFIX/.venv/bin/python" -c "from pathlib import Path; from rutkeeper.bench import ensure_access_token_note; ensure_access_token_note(Path(r'''$FILE_ROOT'''))"
 
 if [[ "$MODE" == "system" ]]; then
   if ! id rutkeeper >/dev/null 2>&1; then

@@ -21,7 +21,7 @@ from rutkeeper.firmware import human_size
 from rutkeeper.rms import parse_id_list, summarize_devices, task_group_body
 from rutkeeper.rms import RmsClient, RmsError
 from rutkeeper.rutos import RutosError
-from rutkeeper.bench import Bench, connect_host, files_root
+from rutkeeper.bench import Bench, access_token_note_path, connect_host, files_root, read_access_token_note
 from rutkeeper.bench import Busy as BenchBusy
 from rutkeeper.worker import Runner
 
@@ -102,6 +102,8 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             zone_label=now.tzname() or "local",
             now_epoch=int(now.timestamp() * 1000),
             path=request.url.path,
+            access_token_note=read_access_token_note(bench.directory),
+            access_token_path=str(access_token_note_path(bench.directory)),
             **ctx,
         )
         return HTMLResponse(html, status_code=status)

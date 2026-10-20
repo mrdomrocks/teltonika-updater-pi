@@ -20,6 +20,8 @@
       <label>Access token
         <input name="token" type="password" autocomplete="new-password" placeholder="{% if settings.rms_token_enc %}Token saved. Paste a new one to replace it.{% else %}Paste the token from RMS → Account settings → API{% endif %}">
       </label>
+      <p class="hint">Which scopes to select is written in <span class="mono">{{ access_token_path }}</span>. Open that notepad in the Access Token folder.</p>
+      <pre class="mono" id="access-token-note">{{ access_token_note }}</pre>
       <label class="check">
         <input type="checkbox" name="clear_token" value="1">
         Remove the saved token

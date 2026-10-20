@@ -17,6 +17,25 @@ def _csrf(page) -> str:
     return page.text[start:end]
 
 
+def test_access_token_folder_holds_a_notepad_the_rms_page_reads(client):
+    note = client.app.state.bench.directory / "Access Token" / "Access Token.txt"
+    assert note.is_file()
+    text = note.read_text(encoding="utf-8")
+    assert "files:write" in text
+    assert "device_actions:write" in text
+    assert "device_passwords:write" in text
+    assert "devices:read" in text
+    page = client.get("/rms")
+    assert page.status_code == 200
+    assert "Access Token.txt" in page.text
+    assert "files:write" in page.text
+    assert "device_passwords:write" in page.text
+    note.write_text("Edited access token note.\n", encoding="utf-8")
+    again = client.get("/rms")
+    assert "Edited access token note." in again.text
+    assert "files:write" not in again.text
+
+
 def test_newest_file_in_a_folder_is_used(client):
     _drop(client, "Firmware", "old.bin", b"old")
     newer = client.app.state.bench.directory / "Firmware" / "new.bin"

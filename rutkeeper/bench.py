@@ -26,6 +26,42 @@ FOLDERS = {
     "config1": "Config 1",
     "config2": "Config 2",
 }
+ACCESS_TOKEN_FOLDER = "Access Token"
+ACCESS_TOKEN_NOTE = "Access Token.txt"
+ACCESS_TOKEN_DETAILS = """\
+Access token details
+====================
+
+Create the token in RMS: Account settings, API, Access tokens.
+Select these scopes to write firmware, a config file, and the router password.
+
+files:write
+    Upload the firmware image and the config file.
+
+device_actions:write
+    Install that firmware and apply that config file on the router.
+
+device_passwords:write
+    Change the router password.
+
+devices:read
+    Look up the router you are writing to.
+
+Leave these unchecked. They do not do those three jobs.
+
+device_configurations:write
+    Changes configuration parameters, not a config file.
+
+multi_configuration:write
+    Multi-device parameter editor.
+
+device_passwords:read
+    Reads a stored password. Setting a new password does not need it.
+
+device_tasks:write
+device_task_groups:execute
+    Task Manager only. Not required for a direct firmware, config, or password write.
+"""
 FIXED_ADMIN_PASSWORD = "Enter@qua1!"
 _HOLD_PHASES = {"busy", "rebooting", "await-address"}
 
@@ -504,6 +540,7 @@ class Bench:
                 (self.directory / name).mkdir(parents=True, exist_ok=True)
             except OSError:
                 continue
+        ensure_access_token_note(self.directory)
 
     def chosen(self, slot: str) -> Path | None:
         folder = self.directory / FOLDERS[slot]
@@ -544,8 +581,34 @@ def probe(host: str) -> tuple[bool, bool, int | None]:
     return ping_ok, http_ok, rtt
 
 
+def access_token_note_path(directory: Path) -> Path:
+    return directory / ACCESS_TOKEN_FOLDER / ACCESS_TOKEN_NOTE
+
+
+def ensure_access_token_note(directory: Path) -> Path:
+    """Create the Access Token folder and its notepad when they are missing."""
+    path = access_token_note_path(directory)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.is_file():
+            path.write_text(ACCESS_TOKEN_DETAILS, encoding="utf-8")
+    except OSError:
+        return path
+    return path
+
+
+def read_access_token_note(directory: Path) -> str:
+    """Read the notepad in the Access Token folder. Leave an edited file alone."""
+    path = ensure_access_token_note(directory)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return ACCESS_TOKEN_DETAILS.strip()
+    return text.strip() or ACCESS_TOKEN_DETAILS.strip()
+
+
 def files_root(data: Path) -> Path:
-    """Parent of the Firmware, Config 1, and Config 2 folders."""
+    """Parent of the Firmware, Config 1, Config 2, and Access Token folders."""
     env = os.environ.get("RUTKEEPER_FILES")
     return Path(env) if env else data
 

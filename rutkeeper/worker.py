@@ -29,7 +29,7 @@ from rutkeeper.firmware import (
     schedule_due,
     slot_key,
 )
-from rutkeeper.rms import RmsClient, RmsError, parse_id_list
+from rutkeeper.bench import lan_ready
 from rutkeeper.rutos import RutosClient, RutosError
 
 SessionFactory = Callable[[dict, str], Any]
@@ -137,6 +137,7 @@ class Runner:
 
     def check(self, device_id: int) -> dict[str, Any]:
         device = self._require(device_id)
+        self._require_lan(device)
         session = self._open(device)
         try:
             system = session.system_status()
@@ -172,6 +173,7 @@ class Runner:
 
     def backup(self, device_id: int, kind: str | None = None) -> dict[str, Any]:
         device = self._require(device_id)
+        self._require_lan(device)
         # Refresh identity first so the file is stamped with product code and firmware.
         if not device.get("is_demo"):
             try:
@@ -218,6 +220,7 @@ class Runner:
 
     def update(self, device_id: int) -> None:
         device = self._require(device_id)
+        self._require_lan(device)
         report_fields = self.check(device_id)
         device = self._require(device_id)
         if report_fields.get("update_state") != "available":
@@ -298,6 +301,7 @@ class Runner:
 
     def push(self, device_id: int, backup_id: int) -> None:
         device = self._require(device_id)
+        self._require_lan(device)
         backup = self.db.backup(backup_id)
         if not backup:
             raise RutosError("That backup is no longer on this Pi.")
@@ -381,18 +385,6 @@ class Runner:
                     f"{fresh['name']} has a stable update. It was not installed. Arm the site and enable auto-apply on the router to allow that.",
                     device_id=fresh["id"],
                 )
-        if settings.get("rms_in_schedule") == "1":
-            if not armed:
-                self.db.add_event(
-                    "info",
-                    "rms",
-                    "RMS task group was not fired. Updates are disarmed, and that group installs firmware.",
-                )
-            else:
-                try:
-                    self.run_rms(scheduled=True)
-                except (RmsError, ValueError) as exc:
-                    self.db.add_event("error", "rms", scrub(str(exc)))
 
     def _note_missed(self, now: datetime, mode: str, hour: int, minute: int, settings: dict) -> None:
         if mode in ("", "manual"):
@@ -412,25 +404,14 @@ class Runner:
             f"The {hour:02d}:{minute:02d} window passed while TUA was stopped. It will not catch up.",
         )
 
-    def run_rms(self, *, scheduled: bool = False) -> object:
-        settings = self.db.settings()
-        token = self.secrets.decrypt(settings.get("rms_token_enc") or "")
-        if not token:
-            raise RmsError("Add an RMS access token first.")
-        device_ids = parse_id_list(settings.get("rms_device_ids") or "")
-        task_ids = parse_id_list(settings.get("rms_task_ids") or "")
-        client = RmsClient(token, settings.get("rms_base") or "https://api.rms.teltonika-networks.com")
-        try:
-            payload = client.run_group(settings.get("rms_group_id") or "", device_ids, task_ids)
-        finally:
-            client.close()
-        how = "Scheduled RMS run" if scheduled else "RMS task group"
-        self.db.add_event(
-            "warn",
-            "rms",
-            f"{how} accepted for group {settings.get('rms_group_id')} on device ids {device_ids}.",
-        )
-        return payload
+    def _require_lan(self, device: dict) -> None:
+        host = str(device.get("host") or "")
+        if device.get("is_demo") or host.startswith("demo://"):
+            if host.endswith(".offline"):
+                raise RutosError("No route to host. The router did not answer on the LAN.")
+            return
+        if not lan_ready(host):
+            raise RutosError("The router is not plugged in on the LAN. This action was not started.")
 
     def _require(self, device_id: int) -> dict:
         device = self.db.device(device_id)

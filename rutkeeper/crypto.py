@@ -1,4 +1,4 @@
-"""Encrypt router passwords and the RMS token before they touch disk."""
+"""Encrypt router passwords before they touch disk."""
 
 from __future__ import annotations
 

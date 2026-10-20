@@ -17,23 +17,14 @@ def _csrf(page) -> str:
     return page.text[start:end]
 
 
-def test_access_token_folder_holds_a_notepad_the_rms_page_reads(client):
-    note = client.app.state.bench.directory / "Access Token" / "Access Token.txt"
-    assert note.is_file()
-    text = note.read_text(encoding="utf-8")
-    assert "files:write" in text
-    assert "device_actions:write" in text
-    assert "device_passwords:write" in text
-    assert "devices:read" in text
-    page = client.get("/rms")
-    assert page.status_code == 200
-    assert "Access Token.txt" in page.text
-    assert "files:write" in page.text
-    assert "device_passwords:write" in page.text
-    note.write_text("Edited access token note.\n", encoding="utf-8")
-    again = client.get("/rms")
-    assert "Edited access token note." in again.text
-    assert "files:write" not in again.text
+def test_access_token_folder_is_not_created(client):
+    root = client.app.state.bench.directory
+    assert not (root / "Access Token").exists()
+    assert not (root / "Access Token.txt").exists()
+    page = client.get("/")
+    assert "Access token" not in page.text
+    assert "Access Token" not in page.text
+    assert 'data-start-on-lan="1"' in page.text
 
 
 def test_newest_file_in_a_folder_is_used(client):
@@ -179,6 +170,40 @@ def test_install_form_requires_a_config_choice(client):
     assert page.status_code == 200
     assert "Select Config 1 or Config 2." in page.text
     assert client.app.state.bench.status["phase"] != "busy"
+
+
+def test_install_waits_until_the_router_answers_on_the_lan(client, monkeypatch):
+    monkeypatch.setattr("rutkeeper.bench.lan_ready", lambda host: False)
+    token = _csrf(client.get("/"))
+    _drop(client, "Firmware", "rut.bin", b"firmware-bytes")
+    _drop(client, "Config 1", "config.tar.gz", b"config-bytes")
+    page = client.post(
+        "/bench/run",
+        data={
+            "csrf": token,
+            "action": "install",
+            "config": "config1",
+            "current_password": "label-password",
+        },
+        follow_redirects=True,
+    )
+    assert page.status_code == 200
+    assert "answers on the LAN" in page.text
+    assert client.app.state.bench.status["phase"] != "busy"
+    assert client.app.state.bench.sim.firmware == ""
+
+
+def test_check_is_not_taken_when_the_router_is_not_on_the_lan(client, monkeypatch):
+    monkeypatch.setattr("rutkeeper.worker.lan_ready", lambda host: False)
+    device_id = client.app.state.db.insert_device(
+        {"name": "Cable", "host": "192.168.1.1", "username": "admin", "is_demo": 0}
+    )
+    client.app.state.runner.run_inline(device_id, "check")
+    fresh = client.app.state.db.device(device_id)
+    assert fresh["last_seen"] is None
+    messages = " ".join(event["message"] for event in client.app.state.db.events(device_id=device_id))
+    assert "not plugged in on the LAN" in messages
+    assert "This action was not started." in messages
 
 
 def test_flash_without_a_password_is_refused(client):

@@ -115,10 +115,10 @@
       } else if (hint && !busy && !data.error) {
         if (!data.firmware_ready) hint.textContent = "Put a firmware file in the Firmware folder.";
         else if (!data.config1_ready && !data.config2_ready) hint.textContent = "Put a config file in the Config 1 or Config 2 folder.";
-        else if (!data.http) hint.textContent = "Waiting for the router to answer.";
-        else if (!typed) hint.textContent = "Type this router’s current password or scan its label, pick a config, then install.";
+        else if (!data.http) hint.textContent = "Waiting for the router to answer on the LAN.";
+        else if (!typed) hint.textContent = "Type this router’s current password or scan its label, then pick a config.";
         else if (!configReady) hint.textContent = "Pick Config 1 or Config 2.";
-        else hint.textContent = "Install signs in, sets the admin password, writes the firmware, then applies the config on the new address.";
+        else hint.textContent = "The router is on the LAN. Install signs in, sets the admin password, writes the firmware, then applies the config.";
       }
     };
 
@@ -305,7 +305,14 @@
           if (tick !== lastTick && data.http) {
             lastTick = tick;
             var announce = document.getElementById("bench-announce");
-            var message = data.host + " answered. The router is ready.";
+            var message = data.host + " answered on the LAN.";
+            var form = document.getElementById("bench-run");
+            var install = document.getElementById("install-button");
+            var holding = data.phase === "busy" || data.phase === "rebooting" || data.phase === "await-address";
+            var startOnLan = form && form.getAttribute("data-start-on-lan") === "1" && install && !install.disabled && !holding;
+            if (startOnLan) {
+              message += " Install started.";
+            }
             if (announce) {
               announce.hidden = false;
               announce.textContent = message;
@@ -314,6 +321,7 @@
             if (window.Notification && Notification.permission === "granted") {
               new Notification("TUA", { body: message });
             }
+            if (startOnLan) install.click();
           } else {
             lastTick = tick;
           }

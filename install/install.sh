@@ -68,6 +68,7 @@ Environment=RUTKEEPER_FILES=$FILE_ROOT
 Environment=RUTKEEPER_HOST=0.0.0.0
 Environment=RUTKEEPER_PORT=8741
 Environment=RUTKEEPER_TLS=1
+Environment=RUTKEEPER_TLS_PORT=8742
 Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=$PREFIX/.venv/bin/python -m rutkeeper
 Restart=on-failure
@@ -84,15 +85,16 @@ WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
   systemctl enable --now rutkeeper.service
+  PI_IP="$(hostname -I | awk '{print $1}')"
   echo
-  echo "TUA is running at https://$(hostname -I | awk '{print $1}'):8741"
-  echo "Accept the self-signed certificate once so phones can open the camera for label scanning."
+  echo "TUA is running at http://${PI_IP}:8741"
+  echo "Live label scanning: https://${PI_IP}:8742 (accept the certificate once)"
   echo "Data directory: $DATA"
 else
   echo
   echo "Installed into $PREFIX"
   echo "Start it with:"
-  echo "  RUTKEEPER_DATA=$DATA RUTKEEPER_HOST=0.0.0.0 RUTKEEPER_PORT=8741 RUTKEEPER_TLS=1 $PREFIX/.venv/bin/python -m rutkeeper"
+  echo "  RUTKEEPER_DATA=$DATA RUTKEEPER_HOST=0.0.0.0 RUTKEEPER_PORT=8741 RUTKEEPER_TLS=1 RUTKEEPER_TLS_PORT=8742 $PREFIX/.venv/bin/python -m rutkeeper"
 fi
 
 echo "Keep this host off the public internet. It stores router admin passwords."

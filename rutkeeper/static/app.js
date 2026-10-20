@@ -257,8 +257,10 @@
     if (scanButton) {
       scanButton.addEventListener("click", function () {
         if (!window.isSecureContext) {
-          var httpsUrl = "https://" + window.location.host + window.location.pathname;
-          setScanStatus("Live scanning needs HTTPS. Open " + httpsUrl + " and allow the camera.", "bad");
+          var tlsMeta = document.querySelector('meta[name="tua-tls-port"]');
+          var tlsPort = (tlsMeta && tlsMeta.content) || "8742";
+          var httpsUrl = "https://" + window.location.hostname + ":" + tlsPort + window.location.pathname + window.location.search;
+          setScanStatus("Live scanning needs HTTPS. Open " + httpsUrl + ", accept the certificate, then press Scan the label.", "bad");
           return;
         }
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {

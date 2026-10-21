@@ -5,6 +5,10 @@ writes the local firmware on the cable address, applies Config 1 or Config 2
 on that same address, then waits for the router's new address. Answering on
 the new address confirms the config was uploaded.
 
+Factory units always answer on the cable address (192.168.1.1) until the
+config file is uploaded. After that they move to 192.168.100.1 — that answer
+is the confirmation the config landed.
+
 The password that was already on the router is held in memory for that job
 only. It is not written to the database. The admin password set here is fixed.
 """
@@ -28,6 +32,10 @@ FOLDERS = {
     "config2": "Config 2",
 }
 FIXED_ADMIN_PASSWORD = "Enter@qua1!"
+# Factory LAN before any config file; stays here through firmware and config upload.
+CABLE_HOST = "192.168.1.1"
+# LAN after the config file is applied — answer here confirms the upload.
+POST_CONFIG_HOST = "192.168.100.1"
 _HOLD_PHASES = {"busy", "rebooting", "await-address"}
 
 
@@ -155,8 +163,8 @@ class Bench:
             status = dict(self.status)
         status.update(
             {
-                "host": settings.get("bench_host") or "192.168.1.1",
-                "next_host": settings.get("bench_next_host") or "",
+                "host": settings.get("bench_host") or CABLE_HOST,
+                "next_host": settings.get("bench_next_host") or POST_CONFIG_HOST,
                 "username": settings.get("bench_username") or "admin",
                 "simulate": settings.get("bench_simulate") == "1",
                 "has_target_password": True,
@@ -175,9 +183,9 @@ class Bench:
 
     def save_setup(self, host: str, username: str, next_host: str, simulate: bool) -> None:
         values = {
-            "bench_host": _host_only(host),
+            "bench_host": _host_only(host) or CABLE_HOST,
             # Config upload moves the router here; default matches the usual post-config LAN.
-            "bench_next_host": _optional_host(next_host) or "192.168.100.1",
+            "bench_next_host": _optional_host(next_host) or POST_CONFIG_HOST,
             "bench_username": (username or "admin").strip()[:80] or "admin",
             "bench_simulate": "1" if simulate else "0",
         }
@@ -252,25 +260,46 @@ class Bench:
             raise RutosError(f"Put a config file in the {FOLDERS[slot]} folder.")
         if self.chosen("firmware") is None:
             raise RutosError("Put a firmware file in the Firmware folder.")
+        # Factory units always start on the cable address until the config lands.
+        self._pin_cable_address()
         self._sign_in(typed_password)
         self._set_fixed_password()
-        # Firmware reboot stays on the cable address (usually 192.168.1.1).
-        # The address only changes after the config is uploaded.
+        # Firmware reboot stays on the cable address. The address only changes
+        # after the config file is uploaded.
         self._flash(FIXED_ADMIN_PASSWORD, hold=True, reconnect=True)
         self._apply_config(slot, FIXED_ADMIN_PASSWORD)
 
+    def _pin_cable_address(self) -> None:
+        """Keep Address now on the factory cable IP until config upload finishes."""
+        current = _host_only(self.db.setting("bench_host") or CABLE_HOST)
+        if current != CABLE_HOST:
+            self.db.set_settings({"bench_host": CABLE_HOST})
+            self.db.add_event(
+                "info",
+                "workbench",
+                f"Address now reset to {CABLE_HOST} until the config is uploaded.",
+            )
+        else:
+            self.db.set_settings({"bench_host": CABLE_HOST})
+        if not _optional_host(self.db.setting("bench_next_host") or ""):
+            self.db.set_settings({"bench_next_host": POST_CONFIG_HOST})
+
+    def _post_config_host(self) -> str:
+        return _optional_host(self.db.setting("bench_next_host") or "") or POST_CONFIG_HOST
+
     def _sign_in(self, typed_password: str) -> None:
-        self._set(step="login", detail="Signing in.")
-        router, password = self._connect(self._candidates(typed_password))
+        self._set(step="login", detail=f"Signing in at {CABLE_HOST}.")
+        router, password = self._connect(self._candidates(typed_password), host=CABLE_HOST)
         router.close()
         self._session_password = password
-        self._set(step="ready", detail="Router answered.")
+        self._set(step="ready", detail=f"Router answered at {CABLE_HOST}.")
 
     def _manual_sign_in(self, typed_password: str) -> None:
         """Sign in without flashing — recover after an interrupted install.
 
-        Tries Address now, then the post-config address, then the usual cable
-        address. Updates Address now to wherever the router answers.
+        Tries the cable address first, then the post-config address, then
+        whatever Address now still holds. Updates Address now to wherever
+        the router answers.
         """
         self._set(step="login", detail="Signing in. Looking for the router on known addresses.")
         passwords = self._candidates(typed_password, FIXED_ADMIN_PASSWORD)
@@ -278,7 +307,7 @@ class Bench:
         router.close()
         self._session_password = password
         if host:
-            current = _host_only(self.db.setting("bench_host") or "192.168.1.1")
+            current = _host_only(self.db.setting("bench_host") or CABLE_HOST)
             if host != current:
                 self.db.set_settings({"bench_host": host})
                 self.db.add_event("info", "workbench", f"Signed in at {host}. Address now was updated.")
@@ -288,8 +317,8 @@ class Bench:
         self._set(phase="ready", job="", step="ready", error="", detail=f"Signed in at {host or 'the router'}. Ready to continue.")
 
     def _set_fixed_password(self) -> None:
-        self._set(step="password", detail="Setting the admin password.")
-        router, used = self._connect(self._candidates(self._session_password))
+        self._set(step="password", detail=f"Setting the admin password at {CABLE_HOST}.")
+        router, used = self._connect(self._candidates(self._session_password), host=CABLE_HOST)
         try:
             if used != FIXED_ADMIN_PASSWORD:
                 how = router.set_admin_password(used, FIXED_ADMIN_PASSWORD)
@@ -299,7 +328,7 @@ class Bench:
         finally:
             router.close()
         self._session_password = FIXED_ADMIN_PASSWORD
-        confirm, _used = self._connect([FIXED_ADMIN_PASSWORD])
+        confirm, _used = self._connect([FIXED_ADMIN_PASSWORD], host=CABLE_HOST)
         confirm.close()
 
     def _flash(self, typed_password: str, *, hold: bool = False, reconnect: bool = True) -> None:
@@ -308,12 +337,14 @@ class Bench:
             raise RutosError("Put a firmware file in the Firmware folder.")
         name = path.name
         content = path.read_bytes()
+        # Firmware never changes the LAN address; stay on the cable IP.
+        self._pin_cable_address()
         if not self._session_password:
-            self._set(step="login", detail="Signing in.")
-        router, password = self._connect(self._candidates(typed_password))
+            self._set(step="login", detail=f"Signing in at {CABLE_HOST}.")
+        router, password = self._connect(self._candidates(typed_password), host=CABLE_HOST)
         self._session_password = password
         try:
-            self._set(step="firmware", detail=f"Uploading {name}.")
+            self._set(step="firmware", detail=f"Uploading {name} at {CABLE_HOST}.")
             router.upload_firmware(name, content)
             self._set(step="firmware", detail="Starting the firmware install. Settings stay, including the admin password.")
             try:
@@ -323,45 +354,54 @@ class Bench:
                     raise
         finally:
             router.close()
-        self.db.add_event("warn", "workbench", f"Firmware install started from {name}. Waiting for the router to reboot.")
-        self._set(phase="rebooting", step="firmware-reboot", job=self.status.get("job") or "firmware", detail="Router is rebooting after firmware.")
+        self.db.add_event(
+            "warn",
+            "workbench",
+            f"Firmware install started from {name}. Waiting for the router to reboot at {CABLE_HOST}.",
+        )
+        self._set(
+            phase="rebooting",
+            step="firmware-reboot",
+            job=self.status.get("job") or "firmware",
+            detail=f"Router is rebooting after firmware. Still checking {CABLE_HOST}.",
+        )
         if not reconnect:
             return
-        self._wait_until_back()
-        self._set(step="firmware-reboot", detail="Signing in again.")
-        router, password = self._connect(self._candidates(typed_password))
+        self._wait_until_back(CABLE_HOST)
+        self._set(step="firmware-reboot", detail=f"Signing in again at {CABLE_HOST}.")
+        router, password = self._connect(self._candidates(typed_password), host=CABLE_HOST)
         router.close()
         self._session_password = password
-        self.db.add_event("info", "workbench", "Router is back after the firmware install.")
+        self.db.add_event("info", "workbench", f"Router is back at {CABLE_HOST} after the firmware install.")
         if hold:
             self._set(phase="busy", job="install", step="config", error="", detail="Firmware is in. Applying the selected config.")
             return
-        self._set(phase="ready", job="", step="done", error="", detail="Firmware is in. The router answered again.")
+        self._set(phase="ready", job="", step="done", error="", detail=f"Firmware is in. The router answered again at {CABLE_HOST}.")
 
     def _await_new_address(self) -> None:
         """Wait until the router answers on the post-config address.
 
-        The cable address (usually 192.168.1.1) stays in use through firmware
-        and the config upload. Answering on the next address confirms the
-        config was applied successfully.
+        Keep checking the cable address (192.168.1.1) through firmware and the
+        config upload. Only after the config file is uploaded do we look for
+        192.168.100.1 — answering there confirms the config was applied.
         """
         job = "install" if self.status.get("job") == "install" else str(self.status.get("job") or "")
+        nxt = self._post_config_host()
         self._set(
             phase="await-address",
             step="new-address",
             job=job or "install",
             error="",
-            detail="Waiting for the router on its new address. Answering there confirms the config was uploaded.",
+            detail=f"Config uploaded. Waiting for the router at {nxt}. Answering there confirms the upload.",
         )
         if self.db.setting("bench_simulate") == "1":
-            nxt = _optional_host(self.db.setting("bench_next_host") or "") or "192.168.100.1"
             self.db.set_settings({"bench_host": nxt})
             self._set(detail=f"Simulated router answered at {nxt}. Config upload confirmed.")
             self.db.add_event("info", "workbench", f"Router answered at {nxt} after the config. Upload confirmed.")
             return
         deadline = time.monotonic() + 30 * 60
         while time.monotonic() < deadline:
-            nxt = _optional_host(self.db.setting("bench_next_host") or "") or "192.168.100.1"
+            nxt = self._post_config_host()
             ping_ok, http_ok, rtt = probe(nxt)
             self._note_probe(ping_ok, http_ok, rtt)
             if http_ok:
@@ -371,7 +411,7 @@ class Bench:
                 return
             self._set(detail=f"Waiting for {nxt}. Answering there confirms the config was uploaded.")
             time.sleep(3)
-        raise RutosError("The router did not answer on the new address within 30 minutes.")
+        raise RutosError(f"The router did not answer at {self._post_config_host()} within 30 minutes.")
 
     def _apply_config(self, slot: str, typed_password: str) -> None:
         path = self.chosen(slot)
@@ -382,23 +422,31 @@ class Bench:
         content = path.read_bytes()
         embedded_key = "bench_config1_password_enc" if slot == "config1" else "bench_config2_password_enc"
         embedded = self.secrets.decrypt(self.db.setting(embedded_key))
-        self._set(phase="busy", job="install" if self.status.get("job") == "install" else slot, step="config", error="", detail=f"Signing in to apply {name}.")
-        router, password = self._connect(self._candidates(typed_password, embedded))
+        # Config is applied on the cable address; the LAN only moves afterward.
+        self._pin_cable_address()
+        self._set(
+            phase="busy",
+            job="install" if self.status.get("job") == "install" else slot,
+            step="config",
+            error="",
+            detail=f"Signing in at {CABLE_HOST} to apply {name}.",
+        )
+        router, password = self._connect(self._candidates(typed_password, embedded), host=CABLE_HOST)
         try:
-            self._set(step="config", detail=f"Uploading {name}.")
+            self._set(step="config", detail=f"Uploading {name} at {CABLE_HOST}.")
             router.upload_backup(name, content)
             router.apply_backup()
             if isinstance(router, SimRouter):
                 router.replace_password(embedded)
         finally:
             router.close()
-        self.db.add_event("warn", "workbench", f"Applied {name}. Waiting for the router on its new address.")
-        self._set(phase="rebooting", step="config", detail="Config uploaded. Waiting for the router on its new address.")
-        # The LAN address stays at the cable IP until the config is applied.
-        # Seeing the next address (usually 192.168.100.1) is the success check.
+        nxt = self._post_config_host()
+        self.db.add_event("warn", "workbench", f"Applied {name} at {CABLE_HOST}. Waiting for the router at {nxt}.")
+        self._set(phase="rebooting", step="config", detail=f"Config uploaded at {CABLE_HOST}. Waiting for {nxt}.")
+        # Only now leave the cable IP — seeing the next address confirms success.
         self._await_new_address()
-        self._set(step="new-address", detail="Signing in to confirm the admin password.")
-        router, used = self._connect(self._candidates(typed_password, embedded, password))
+        self._set(step="new-address", detail=f"Signing in at {nxt} to confirm the admin password.")
+        router, used = self._connect(self._candidates(typed_password, embedded, password), host=nxt)
         try:
             if used != target:
                 how = router.set_admin_password(used, target)
@@ -407,7 +455,7 @@ class Bench:
                 self.db.add_event("info", "workbench", "Router already had the fixed admin password.")
         finally:
             router.close()
-        confirm, _used = self._connect([target])
+        confirm, _used = self._connect([target], host=nxt)
         confirm.close()
         self._session_password = ""
         label = "Config 1" if slot == "config1" else "Config 2"
@@ -418,11 +466,15 @@ class Bench:
         return _unique([*extra, self._session_password])
 
     def _lookup_hosts(self) -> list[str]:
-        """Addresses to try when finding a router after an interruption."""
+        """Addresses to try when finding a router after an interruption.
+
+        Prefer the factory cable address, then the post-config address, then
+        whatever Address now still holds from a previous job.
+        """
         settings = self.db.settings()
-        host = _host_only(settings.get("bench_host") or "192.168.1.1")
-        nxt = _optional_host(settings.get("bench_next_host") or "") or "192.168.100.1"
-        return _unique([host, "192.168.1.1", nxt])
+        host = _host_only(settings.get("bench_host") or CABLE_HOST)
+        nxt = _optional_host(settings.get("bench_next_host") or "") or POST_CONFIG_HOST
+        return _unique([CABLE_HOST, nxt, host])
 
     def _connect(self, passwords: list[str], host: str | None = None):
         passwords = _unique(passwords)
@@ -434,7 +486,7 @@ class Bench:
             used = self.sim.accept(passwords)
             return self.sim, used
         settings = self.db.settings()
-        target = _host_only(host or settings.get("bench_host") or "192.168.1.1")
+        target = _host_only(host or settings.get("bench_host") or CABLE_HOST)
         username = settings.get("bench_username") or "admin"
         last: RutosError | None = None
         for password in passwords:
@@ -457,7 +509,7 @@ class Bench:
             )
         if self.db.setting("bench_simulate") == "1":
             used = self.sim.accept(passwords)
-            host = _host_only(self.db.setting("bench_host") or "192.168.1.1")
+            host = _host_only(self.db.setting("bench_host") or CABLE_HOST)
             return self.sim, used, host
         last: RutosError | None = None
         tried: list[str] = []
@@ -473,25 +525,31 @@ class Bench:
         where = ", ".join(tried) if tried else "the LAN"
         raise last or RutosError(f"Could not sign in at {where}.")
 
-    def _wait_until_back(self) -> None:
+    def _wait_until_back(self, host: str | None = None) -> None:
+        """Ping/check one address until the router answers again after a reboot."""
         if self.db.setting("bench_simulate") == "1":
             self._mark(ping=False, http=False, rtt_ms=None, detail="Simulated reboot.")
             time.sleep(0.05)
             self._mark(ping=True, http=True, rtt_ms=1, detail="Simulated router is back.")
             return
-        host = _host_only(self.db.setting("bench_host") or "192.168.1.1")
+        target = _host_only(host or self.db.setting("bench_host") or CABLE_HOST)
         started = time.monotonic()
         deadline = started + 8 * 60
         saw_down = False
         while time.monotonic() < deadline:
-            ping_ok, http_ok, rtt = probe(host)
-            self._mark(ping=ping_ok, http=http_ok, rtt_ms=rtt, detail="Waiting for the router to answer again.")
+            ping_ok, http_ok, rtt = probe(target)
+            self._mark(
+                ping=ping_ok,
+                http=http_ok,
+                rtt_ms=rtt,
+                detail=f"Waiting for the router at {target}.",
+            )
             if not http_ok:
                 saw_down = True
             elif saw_down or time.monotonic() - started > 45:
                 return
             time.sleep(3)
-        raise RutosError("The router did not come back within 8 minutes.")
+        raise RutosError(f"The router did not come back at {target} within 8 minutes.")
 
     def _watch(self) -> None:
         while not self._stop.is_set():
@@ -518,7 +576,7 @@ class Bench:
         phase = str(self.status.get("phase") or "offline")
         if phase in _HOLD_PHASES:
             return
-        host = _host_only(self.db.setting("bench_host") or "192.168.1.1")
+        host = _host_only(self.db.setting("bench_host") or CABLE_HOST)
         ping_ok, http_ok, rtt = probe(host)
         detail = ""
         if not http_ok:
@@ -552,7 +610,7 @@ class Bench:
             return
         for host in self._lookup_hosts():
             if lan_ready(host):
-                current = _host_only(self.db.setting("bench_host") or "192.168.1.1")
+                current = _host_only(self.db.setting("bench_host") or CABLE_HOST)
                 if host != current:
                     self.db.set_settings({"bench_host": host})
                     self.db.add_event("info", "workbench", f"Router answered at {host}. Address now was updated.")
@@ -675,7 +733,7 @@ def _host_only(host: str) -> str:
     text = text.split("/")[0]
     if "@" in text:
         text = text.split("@", 1)[1]
-    return text or "192.168.1.1"
+    return text or CABLE_HOST
 
 
 def _unique(values: list[str]) -> list[str]:

@@ -125,9 +125,9 @@
         if (!data.firmware_ready) hint.textContent = "Put a firmware file in the Firmware folder.";
         else if (!data.config1_ready && !data.config2_ready) hint.textContent = "Put a config file in the Config 1 or Config 2 folder.";
         else if (!typed) hint.textContent = "Type this router’s current password or scan its label. Use Sign in if an install was interrupted.";
-        else if (!data.http) hint.textContent = "Waiting for the router on the LAN. Sign in also tries the cable address and the address after config.";
+        else if (!data.http) hint.textContent = "Waiting for the router at 192.168.1.1. Sign in also tries 192.168.100.1 after a finished config.";
         else if (!configReady) hint.textContent = "Pick Config 1 or Config 2.";
-        else hint.textContent = "The router is on the LAN. Install runs the full job. Sign in or Apply config resume after an interruption.";
+        else hint.textContent = "The router is on the LAN. Install stays on 192.168.1.1 until the config uploads, then confirms at 192.168.100.1.";
       }
     };
 

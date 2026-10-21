@@ -57,7 +57,8 @@ def test_bench_is_the_front_page(client):
     assert 'id="scan-overlay"' in page.text
     assert 'id="scan-video"' in page.text
     assert 'id="label-photo"' not in page.text
-    assert "same address" in page.text
+    assert "192.168.1.1" in page.text
+    assert "192.168.100.1" in page.text
     assert "8742" not in page.text
     assert 'href="/files"' not in page.text
     assert "Firmware folder" in page.text
@@ -175,6 +176,42 @@ def test_install_confirms_config_on_default_next_host(client):
     assert bench.db.setting("bench_host") == "192.168.100.1"
     messages = " ".join(event["message"] for event in client.app.state.db.events())
     assert "192.168.100.1" in messages
+    assert "Upload confirmed" in messages
+
+
+def test_install_resets_leftover_post_config_host_before_config(client):
+    """A finished unit left Address now at 192.168.100.1; the next unit is still on cable."""
+    token = _csrf(client.get("/"))
+    client.post(
+        "/bench/setup",
+        data={
+            "csrf": token,
+            "host": "192.168.100.1",
+            "next_host": "192.168.100.1",
+            "username": "admin",
+            "simulate": "1",
+        },
+    )
+    _drop(client, "Firmware", "RUT2_R_00.07.18.bin", b"firmware-bytes")
+    _drop(client, "Config 1", "config-1.tar.gz", b"config-bytes")
+    bench = client.app.state.bench
+    assert bench.db.setting("bench_host") == "192.168.100.1"
+    hosts_during: list[str] = []
+
+    original_upload = bench.sim.upload_backup
+
+    def track_upload(filename: str, content: bytes) -> None:
+        hosts_during.append(bench.db.setting("bench_host") or "")
+        original_upload(filename, content)
+
+    bench.sim.upload_backup = track_upload  # type: ignore[method-assign]
+    bench.run_inline("install", "label-password", "config1")
+    assert hosts_during == ["192.168.1.1"]
+    assert bench.sim.firmware == "RUT2_R_00.07.18.bin"
+    assert bench.sim.config == "config-1.tar.gz"
+    assert bench.db.setting("bench_host") == "192.168.100.1"
+    messages = " ".join(event["message"] for event in client.app.state.db.events())
+    assert "192.168.1.1" in messages
     assert "Upload confirmed" in messages
 
 

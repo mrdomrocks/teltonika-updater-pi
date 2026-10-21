@@ -57,8 +57,8 @@ def test_bench_is_the_front_page(client):
     assert 'id="scan-overlay"' in page.text
     assert 'id="scan-video"' in page.text
     assert 'id="label-photo"' not in page.text
-    assert "HTTP port 8741" in page.text
-    assert 'name="tua-tls-port"' in page.text
+    assert "same address" in page.text
+    assert "8742" not in page.text
     assert 'href="/files"' not in page.text
     assert "Firmware folder" in page.text
     assert client.get("/files").status_code == 404

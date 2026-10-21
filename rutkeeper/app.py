@@ -100,7 +100,6 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             zone_label=now.tzname() or "local",
             now_epoch=int(now.timestamp() * 1000),
             path=request.url.path,
-            tls_port=int(os.environ.get("RUTKEEPER_TLS_PORT", "8742")),
             **ctx,
         )
         return HTMLResponse(html, status_code=status)

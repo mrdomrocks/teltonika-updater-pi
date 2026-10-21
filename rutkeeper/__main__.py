@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 from pathlib import Path
 
 import uvicorn
 
 from rutkeeper.app import create_app, default_data_dir
+from rutkeeper.gateway import start_gateway
 from rutkeeper.tls import ensure_tls
 
 
@@ -19,23 +19,15 @@ def _truthy(value: str | None) -> bool | None:
 
 
 def use_tls(host: str) -> bool:
-    """Offer HTTPS for live camera scanning on phones."""
+    """HTTPS on the workbench port so phones can live-scan on the same URL."""
     flag = _truthy(os.environ.get("RUTKEEPER_TLS"))
     if flag is not None:
         return flag
     return host not in {"127.0.0.1", "localhost", "::1"}
 
 
-def tls_port() -> int:
-    return int(os.environ.get("RUTKEEPER_TLS_PORT", "8742"))
-
-
-async def _serve(http: uvicorn.Server, https: uvicorn.Server | None) -> None:
-    if https is None:
-        await http.serve()
-        return
-    https.install_signal_handlers = False
-    await asyncio.gather(http.serve(), https.serve())
+def backend_port() -> int:
+    return int(os.environ.get("RUTKEEPER_BACKEND_PORT", "18741"))
 
 
 def main() -> None:
@@ -45,34 +37,18 @@ def main() -> None:
     app = create_app(data)
     display = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
 
-    # HTTP on the main port so http://<pi-ip>:8741 works in a browser.
-    http = uvicorn.Server(
-        uvicorn.Config(app, host=host, port=port, log_level="info", lifespan="on")
-    )
-    https: uvicorn.Server | None = None
-    print(f"TUA listening on http://{display}:{port}", flush=True)
+    if not use_tls(host):
+        print(f"TUA listening on http://{display}:{port}", flush=True)
+        uvicorn.run(app, host=host, port=port, log_level="info")
+        return
 
-    if use_tls(host):
-        cert, key = ensure_tls(data)
-        secure_port = tls_port()
-        https = uvicorn.Server(
-            uvicorn.Config(
-                app,
-                host=host,
-                port=secure_port,
-                log_level="info",
-                lifespan="off",
-                ssl_certfile=str(cert),
-                ssl_keyfile=str(key),
-            )
-        )
-        print(
-            f"TUA live scan on https://{display}:{secure_port} "
-            "(accept the self-signed certificate once)",
-            flush=True,
-        )
-
-    asyncio.run(_serve(http, https))
+    cert, key = ensure_tls(data)
+    inner = backend_port()
+    start_gateway(host, port, "127.0.0.1", inner, cert, key)
+    print(f"TUA listening on https://{display}:{port}", flush=True)
+    print("http:// on this port redirects to https:// (accept the certificate once).", flush=True)
+    # App stays on loopback HTTP; the gateway terminates TLS on the public port.
+    uvicorn.run(app, host="127.0.0.1", port=inner, log_level="info")
 
 
 if __name__ == "__main__":

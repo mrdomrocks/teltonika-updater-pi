@@ -43,7 +43,7 @@
     </div>
   </div>
   <p class="hint" id="scan-status" role="status"></p>
-  <p class="hint">Used once to sign in. It is not saved. The workbench is on HTTP port 8741. For a live label scan on a phone, open HTTPS port {{ tls_port }}, accept the certificate once, then press Scan the label. TUA then sets the admin password to Enter@qua1!, writes the firmware, applies the config on the same address, and treats the new address as confirmation that the config uploaded.</p>
+  <p class="hint">Used once to sign in. It is not saved. Open this page with https:// on port 8741 (accept the certificate once). Scan the label opens the live camera on that same address, reads the QR code, and fills the password. TUA then sets the admin password to Enter@qua1!, writes the firmware, applies the config on the same address, and treats the new address as confirmation that the config uploaded.</p>
   <fieldset class="choices">
     <legend>Config to apply after the firmware</legend>
     {% set pick = "config1" if bench.config1_ready else ("config2" if bench.config2_ready else "") %}

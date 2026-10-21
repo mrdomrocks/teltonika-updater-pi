@@ -58,22 +58,16 @@ else
   else
     git -C "$SRC" remote add origin "$REMOTE"
   fi
-  if git -C "$SRC" remote get-url cursor >/dev/null 2>&1; then
-    git -C "$SRC" remote remove cursor
-  fi
 fi
 
 if [[ -z "$REF" && -f "$SRC/.update-ref" ]]; then
   REF="$(tr -d '[:space:]' < "$SRC/.update-ref")"
-elif [[ -z "$REF" && -f "$SRC/.cursor-ref" ]]; then
-  REF="$(tr -d '[:space:]' < "$SRC/.cursor-ref")"
 fi
 REF="${REF:-${RUTKEEPER_GIT_REF:-main}}"
 
 git -C "$SRC" fetch origin "$REF"
 git -C "$SRC" checkout --detach --force FETCH_HEAD
 printf '%s\n' "$REF" > "$SRC/.update-ref"
-rm -f "$SRC/.cursor-ref"
 
 echo "Installing $(git -C "$SRC" rev-parse --short HEAD) from $REMOTE ($REF)."
 if [[ "$MODE" == "user" ]]; then

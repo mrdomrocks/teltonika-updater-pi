@@ -51,7 +51,7 @@ python3 -m venv .venv
 
 Open http://127.0.0.1:8741
 
-Set `RUTKEEPER_HOST`, `RUTKEEPER_PORT`, and `RUTKEEPER_DATA` to change the bind address, port, and data directory. Passwords are encrypted with a key created in that directory. Binding away from localhost turns on HTTPS automatically so phones can use the live label scanner; set `RUTKEEPER_TLS=0` to force plain HTTP.
+Set `RUTKEEPER_HOST`, `RUTKEEPER_PORT`, and `RUTKEEPER_DATA` to change the bind address, port, and data directory. Passwords are encrypted with a key created in that directory. Away from localhost, TUA also listens for HTTPS on port **8742** (`RUTKEEPER_TLS_PORT`) so phones can use the live label scanner; set `RUTKEEPER_TLS=0` to disable that.
 
 ## Install on a Raspberry Pi
 
@@ -61,7 +61,7 @@ Raspberry Pi OS Bookworm or newer, on the same LAN as the routers.
 sudo ./install/install.sh
 ```
 
-That installs to `/opt/rutkeeper`, keeps data in `/var/lib/rutkeeper`, and starts a systemd service bound to `0.0.0.0:8741` with HTTPS. Open `https://<pi-address>:8741` from a machine on that LAN and accept the self-signed certificate once. Phones need that HTTPS page before **Scan the label** can open the camera and fill the password from the QR code.
+That installs to `/opt/rutkeeper`, keeps data in `/var/lib/rutkeeper`, and starts a systemd service bound to `0.0.0.0:8741`. Open `http://<pi-address>:8741` from a machine on that LAN. For live label scanning on a phone, open `https://<pi-address>:8742`, accept the self-signed certificate once, then press **Scan the label**.
 
 A user install, without systemd, goes into `~/.local/rutkeeper`:
 

@@ -310,6 +310,7 @@ def test_manual_sign_in_recovers_after_an_interrupted_install(client):
     bench.sim.admin_password = FIXED_ADMIN_PASSWORD
     bench.run_inline("login", "")
     assert bench.status["phase"] == "ready"
+    assert bench.status["step"] == "signed-in"
     assert bench.status["http"] is True
     assert bench._session_password == FIXED_ADMIN_PASSWORD
     assert "Signed in" in str(bench.status["detail"])
@@ -328,6 +329,7 @@ def test_manual_sign_in_works_when_lan_probe_is_down(client, monkeypatch):
     # Sign in skips the LAN gate so an interrupted unit can still be recovered.
     bench.run_inline("login", "label-password")
     assert bench.status["phase"] == "ready"
+    assert bench.status["step"] == "signed-in"
     assert bench._session_password == "label-password"
 
 
@@ -363,6 +365,23 @@ def test_apply_config_resumes_after_firmware(client):
     assert bench.sim.config == "config-1.tar.gz"
     assert bench.db.setting("bench_host") == "192.168.100.1"
     assert bench.status["step"] == "done"
+
+
+def test_probe_keeps_a_successful_sign_in_off_the_wait_step(client, monkeypatch):
+    token = _csrf(client.get("/"))
+    client.post(
+        "/bench/setup",
+        data={"csrf": token, "host": "192.168.1.1", "username": "admin", "simulate": "1"},
+    )
+    bench = client.app.state.bench
+    bench.run_inline("login", "label-password")
+    bench.db.set_settings({"bench_simulate": "0"})
+    monkeypatch.setattr("rutkeeper.bench.probe", lambda host: (True, True, 4))
+    bench._probe_once()
+    assert bench.status["step"] == "signed-in"
+    assert bench.status["phase"] == "ready"
+    assert "Signed in" in str(bench.status["detail"])
+    assert "Wait for the router" not in str(bench.status["detail"])
 
 
 def test_probe_updates_address_when_router_answers_elsewhere(client, monkeypatch):

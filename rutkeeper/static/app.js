@@ -84,9 +84,14 @@
       var current = data.step || "";
       var index = steps.indexOf(current);
       var failed = Boolean(data.error);
+      var signedIn = current === "signed-in";
       document.querySelectorAll("#install-steps li").forEach(function (item) {
         var mine = steps.indexOf(item.getAttribute("data-step"));
         item.classList.remove("done", "now", "fail");
+        if (signedIn) {
+          if (item.getAttribute("data-step") === "login") item.classList.add("done");
+          return;
+        }
         if (current === "done" || (index > mine && mine >= 0)) item.classList.add("done");
         else if (index === mine) item.classList.add(failed ? "fail" : "now");
       });
@@ -121,6 +126,8 @@
       var hint = document.getElementById("install-hint");
       if (hint && data.phase === "await-address") {
         hint.textContent = "Waiting for the router on its new address. Answering there confirms the config was uploaded.";
+      } else if (hint && signedIn && !data.error) {
+        hint.textContent = "Signed in. Install runs the full job, or Apply config if firmware is already on this router.";
       } else if (hint && !busy && !data.error) {
         if (!data.firmware_ready) hint.textContent = "Put a firmware file in the Firmware folder.";
         else if (!data.config1_ready && !data.config2_ready) hint.textContent = "Put a config file in the Config 1 or Config 2 folder.";
@@ -358,8 +365,13 @@
   document.querySelectorAll("form").forEach(function (form) {
     form.addEventListener("submit", function (event) {
       if (form.id === "bench-run") {
-        var install = document.getElementById("install-button");
-        if (install && install.disabled) {
+        var submitter = event.submitter;
+        var blocked = submitter ? submitter.disabled : false;
+        if (!submitter) {
+          var install = document.getElementById("install-button");
+          blocked = Boolean(install && install.disabled);
+        }
+        if (blocked) {
           event.preventDefault();
           return;
         }

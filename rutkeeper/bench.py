@@ -313,8 +313,19 @@ class Bench:
                 self.db.add_event("info", "workbench", f"Signed in at {host}. Address now was updated.")
             else:
                 self.db.add_event("info", "workbench", f"Signed in at {host}.")
-        self._mark(ping=True, http=True, rtt_ms=1, detail=f"Signed in at {host or 'the router'}. Ready to continue.")
-        self._set(phase="ready", job="", step="ready", error="", detail=f"Signed in at {host or 'the router'}. Ready to continue.")
+        # step "ready" is the install row "Wait for the router". A finished
+        # sign-in must not land there, or the checklist looks stuck on that row.
+        # Skip the ready_tick bump so this login does not auto-start Install.
+        with self._lock:
+            self._was_http = True
+        self._note_probe(True, True, 1)
+        self._set(
+            phase="ready",
+            job="",
+            step="signed-in",
+            error="",
+            detail=f"Signed in at {host or 'the router'}. Ready to continue.",
+        )
 
     def _set_fixed_password(self) -> None:
         self._set(step="password", detail=f"Setting the admin password at {CABLE_HOST}.")
@@ -578,6 +589,7 @@ class Bench:
             return
         host = _host_only(self.db.setting("bench_host") or CABLE_HOST)
         ping_ok, http_ok, rtt = probe(host)
+        signed_in = str(self.status.get("step") or "") == "signed-in"
         detail = ""
         if not http_ok:
             # After a finished or interrupted job, Address now may still be the
@@ -597,11 +609,17 @@ class Bench:
                     ping_ok, rtt = alt_ping, alt_rtt
                     detail = f"Ping answered at {alt}. Waiting for the web interface."
         if http_ok:
-            detail = detail or "Router is ready."
+            if signed_in:
+                detail = str(self.status.get("detail") or "") or "Signed in. Ready to continue."
+            else:
+                detail = detail or "Router is ready."
         elif ping_ok:
             detail = detail or "Ping answered. Waiting for the web interface."
         else:
             detail = "No answer yet. Plug the router into this Pi."
+        if signed_in and not http_ok:
+            with self._lock:
+                self.status["step"] = ""
         self._mark(ping=ping_ok, http=http_ok, rtt_ms=rtt, detail=detail)
 
     def _require_lan(self) -> None:

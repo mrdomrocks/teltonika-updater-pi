@@ -8,7 +8,7 @@
 <header class="page-head">
   <div>
     <h1>Workbench</h1>
-    <p class="lede">Plug a RUT into this Pi. When it answers on the LAN, TUA signs in, sets the admin password, writes the firmware, waits for the new address, then applies the config. Nothing runs until that cable answers.</p>
+    <p class="lede">Plug a RUT into this Pi. When it answers on the LAN, TUA signs in, sets the admin password, writes the firmware, applies the config on the same address, then waits for the new address to confirm the upload. Nothing runs until that cable answers.</p>
   </div>
 </header>
 
@@ -26,8 +26,8 @@
     <li data-step="password">Set the admin password</li>
     <li data-step="firmware">Write firmware</li>
     <li data-step="firmware-reboot">Wait for reboot</li>
-    <li data-step="new-address">Connect at the new address</li>
     <li data-step="config">Apply the selected config</li>
+    <li data-step="new-address">Confirm at the new address</li>
   </ol>
 </section>
 
@@ -44,7 +44,7 @@
     </div>
   </div>
   <p class="hint" id="scan-status" role="status"></p>
-  <p class="hint">Used once to sign in. It is not saved. The workbench is on HTTP port 8741. For a live label scan on a phone, open HTTPS port {{ tls_port }}, accept the certificate once, then press Scan the label. TUA then sets the admin password to Enter@qua1!, writes the firmware, and applies the config after the router is back on its new address.</p>
+  <p class="hint">Used once to sign in. It is not saved. The workbench is on HTTP port 8741. For a live label scan on a phone, open HTTPS port {{ tls_port }}, accept the certificate once, then press Scan the label. TUA then sets the admin password to Enter@qua1!, writes the firmware, applies the config on the same address, and treats the new address as confirmation that the config uploaded.</p>
   <fieldset class="choices">
     <legend>Config to apply after the firmware</legend>
     {% set pick = "config1" if bench.config1_ready else ("config2" if bench.config2_ready else "") %}
@@ -73,10 +73,10 @@
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <h2>Router</h2>
     <div class="fields">
-      <label id="next-host-label">Address after firmware
-        <input id="next-host" name="next_host" value="{{ bench.next_host }}" spellcheck="false" autocomplete="off" placeholder="Enter this when the router comes back">
+      <label id="next-host-label">Address after config
+        <input id="next-host" name="next_host" value="{{ bench.next_host }}" spellcheck="false" autocomplete="off" placeholder="192.168.100.1">
       </label>
-      <p class="hint">The address changes when the firmware finishes. Leave this blank until you know it. Install waits here before applying the config.</p>
+      <p class="hint">The cable address stays the same through firmware and the config upload. The router answers here only after the config is applied. That answer is the confirmation the upload succeeded.</p>
       <div class="split">
         <label>Address now
           <input name="host" required value="{{ bench.host }}" spellcheck="false" autocomplete="off">

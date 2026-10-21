@@ -47,8 +47,8 @@ def test_bench_is_the_front_page(client):
     assert "Config 2" in page.text
     assert "Sign in" in page.text
     assert "Set the admin password" in page.text
-    assert "Connect at the new address" in page.text
-    assert "Address after firmware" in page.text
+    assert "Confirm at the new address" in page.text
+    assert "Address after config" in page.text
     assert "Scan the label" in page.text
     assert 'id="scan-overlay"' in page.text
     assert 'id="scan-video"' in page.text
@@ -61,6 +61,7 @@ def test_bench_is_the_front_page(client):
     assert "North gate" not in page.text
     status = client.get("/bench/status").json()
     assert status["host"] == "192.168.1.1"
+    assert status["next_host"] == "192.168.100.1"
     assert status["http"] is False
 
 
@@ -87,10 +88,12 @@ def test_config_replaces_the_router_password_with_the_shared_one(client):
     assert bench.sim.firmware == "RUT2_R_00.07.18.bin"
     assert bench.sim.admin_password == "label-password"
 
+    assert bench.db.setting("bench_host") == "192.168.1.1"
     bench.run_inline("config1", "")
     assert bench.sim.config == "config-1.tar.gz"
     assert bench.sim.admin_password == FIXED_ADMIN_PASSWORD
     assert bench._session_password == ""
+    assert bench.db.setting("bench_host") == "192.168.100.1"
 
     raw = Path(client.app.state.db.path).read_bytes()
     assert b"label-password" not in raw
@@ -98,6 +101,7 @@ def test_config_replaces_the_router_password_with_the_shared_one(client):
     assert FIXED_ADMIN_PASSWORD.encode() not in raw
     messages = " ".join(event["message"] for event in client.app.state.db.events())
     assert "Admin password replaced" in messages
+    assert "Upload confirmed" in messages
     assert "label-password" not in messages
 
 
@@ -119,6 +123,7 @@ def test_install_writes_firmware_then_config_and_the_shared_password(client):
     bench = client.app.state.bench
     bench.save_config_password("config1", "from-the-file")
     bench.db.set_settings({"bench_next_host": "10.20.30.40"})
+    assert bench.db.setting("bench_host") == "192.168.1.1"
     bench.run_inline("install", "label-password", "config1")
     assert bench.sim.actions == [
         ("password", FIXED_ADMIN_PASSWORD),
@@ -129,6 +134,7 @@ def test_install_writes_firmware_then_config_and_the_shared_password(client):
     assert bench.sim.firmware == "RUT2_R_00.07.18.bin"
     assert bench.sim.config == "config-1.tar.gz"
     assert bench.sim.admin_password == FIXED_ADMIN_PASSWORD
+    # Address stays on the cable IP until config upload; then next_host confirms it.
     assert bench.db.setting("bench_host") == "10.20.30.40"
     assert bench._session_password == ""
     assert bench.status["step"] == "done"
@@ -140,7 +146,32 @@ def test_install_writes_firmware_then_config_and_the_shared_password(client):
     assert FIXED_ADMIN_PASSWORD.encode() not in raw
     messages = " ".join(event["message"] for event in client.app.state.db.events())
     assert "Admin password replaced" in messages
+    assert "Upload confirmed" in messages
     assert "label-password" not in messages
+
+
+def test_install_confirms_config_on_default_next_host(client):
+    token = _csrf(client.get("/"))
+    client.post(
+        "/bench/setup",
+        data={
+            "csrf": token,
+            "host": "192.168.1.1",
+            "username": "admin",
+            "simulate": "1",
+        },
+    )
+    _drop(client, "Firmware", "RUT2_R_00.07.18.bin", b"firmware-bytes")
+    _drop(client, "Config 1", "config-1.tar.gz", b"config-bytes")
+    bench = client.app.state.bench
+    assert bench.db.setting("bench_next_host") == "192.168.100.1"
+    bench.run_inline("install", "label-password", "config1")
+    assert bench.sim.firmware == "RUT2_R_00.07.18.bin"
+    assert bench.sim.config == "config-1.tar.gz"
+    assert bench.db.setting("bench_host") == "192.168.100.1"
+    messages = " ".join(event["message"] for event in client.app.state.db.events())
+    assert "192.168.100.1" in messages
+    assert "Upload confirmed" in messages
 
 
 def test_install_without_the_config_file_does_not_flash(client):

@@ -169,8 +169,12 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         if action == "install":
             if slot not in {"config1", "config2"}:
                 return redirect("/", "Select Config 1 or Config 2.")
-        elif action not in {"firmware", "config1", "config2"}:
-            return redirect("/", "Choose firmware or a config.")
+        elif action == "config":
+            if slot not in {"config1", "config2"}:
+                return redirect("/", "Select Config 1 or Config 2.")
+            action = slot
+        elif action not in {"login", "firmware", "config1", "config2"}:
+            return redirect("/", "Choose sign in, firmware, or a config.")
         try:
             bench.start_job(action, str(form.get("current_password") or ""), slot)
         except BenchBusy:

@@ -109,16 +109,25 @@
       if (install) {
         install.disabled = busy || !typed || !data.http || !data.firmware_ready || !configReady;
       }
+      var login = document.getElementById("login-button");
+      if (login) {
+        // Password optional: Sign in also tries Enter@qua1! after a partial install.
+        login.disabled = busy;
+      }
+      var applyConfig = document.getElementById("config-button");
+      if (applyConfig) {
+        applyConfig.disabled = busy || !typed || !data.http || !configReady;
+      }
       var hint = document.getElementById("install-hint");
       if (hint && data.phase === "await-address") {
         hint.textContent = "Waiting for the router on its new address. Answering there confirms the config was uploaded.";
       } else if (hint && !busy && !data.error) {
         if (!data.firmware_ready) hint.textContent = "Put a firmware file in the Firmware folder.";
         else if (!data.config1_ready && !data.config2_ready) hint.textContent = "Put a config file in the Config 1 or Config 2 folder.";
-        else if (!data.http) hint.textContent = "Waiting for the router to answer on the LAN.";
-        else if (!typed) hint.textContent = "Type this router’s current password or scan its label, then pick a config.";
+        else if (!typed) hint.textContent = "Type this router’s current password or scan its label. Use Sign in if an install was interrupted.";
+        else if (!data.http) hint.textContent = "Waiting for the router on the LAN. Sign in also tries the cable address and the address after config.";
         else if (!configReady) hint.textContent = "Pick Config 1 or Config 2.";
-        else hint.textContent = "The router is on the LAN. Install signs in, sets the admin password, writes the firmware, applies the config on the same address, then confirms on the new address.";
+        else hint.textContent = "The router is on the LAN. Install runs the full job. Sign in or Apply config resume after an interruption.";
       }
     };
 

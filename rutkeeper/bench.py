@@ -63,6 +63,7 @@ class SimRouter:
         self.password_changes: list[str] = []
         self.actions: list[tuple[str, str]] = []
         self.wireless_name = ""
+        self.wireless_key = ""
         self.rms: list[dict[str, str]] = []
 
     def accept(self, passwords: list[str]) -> str:
@@ -106,8 +107,9 @@ class SimRouter:
         self.actions.append(("password", new))
         return "simulated"
 
-    def set_wireless_name(self, ssid: str) -> int:
+    def set_wireless_name(self, ssid: str, key: str) -> int:
         self.wireless_name = ssid
+        self.wireless_key = key
         self.actions.append(("wireless", ssid))
         return 1
 
@@ -138,8 +140,8 @@ class LiveRouter:
     def set_admin_password(self, current: str, new: str) -> str:
         return self.client.set_admin_password(current, new)
 
-    def set_wireless_name(self, ssid: str) -> int:
-        return self.client.set_wireless_ssids(ssid)
+    def set_wireless_name(self, ssid: str, key: str) -> int:
+        return self.client.set_wireless_ssids(ssid, key)
 
     @property
     def password_change_required(self) -> bool:
@@ -645,10 +647,10 @@ class Bench:
             raise RutosError("Set the RMS company id on the RMS page.")
         log_path = self._device_log()
         number, wifi_name, known = name_for(log_path, serial)
-        self._set(step="wireless", detail=f"Setting the wireless name to {wifi_name} at {host}.")
+        self._set(step="wireless", detail=f"Setting the wireless name and password at {host}.")
         router, _used = self._connect([password], host=host)
         try:
-            router.set_wireless_name(wifi_name)
+            router.set_wireless_name(wifi_name, password)
         finally:
             router.close()
         if not known:

@@ -153,6 +153,7 @@ def test_install_writes_firmware_then_config_and_the_shared_password(client):
     assert bench.sim.firmware == "RUT2_R_00.07.18.bin"
     assert bench.sim.config == "config-1.tar.gz"
     assert bench.sim.admin_password == FIXED_ADMIN_PASSWORD
+    assert bench.sim.wireless_key == FIXED_ADMIN_PASSWORD
     # Address stays on the cable IP until config upload; then next_host confirms it.
     assert bench.db.setting("bench_host") == "10.20.30.40"
     assert bench._session_password == ""

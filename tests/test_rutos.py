@@ -176,6 +176,33 @@ def test_password_change_uses_ubus_when_users_lua_rejects_a_string():
     assert seen[1]["args"] == {"user": "admin", "password": "Enter@qua1!"}
 
 
+def test_wireless_rename_also_sets_the_passphrase():
+    import json
+
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/login":
+            return httpx.Response(200, json={"success": True, "data": {"token": "abc"}})
+        if request.url.path == "/api/wireless/interfaces/config" and request.method == "GET":
+            return httpx.Response(
+                200,
+                json={"success": True, "data": [{"id": "default_radio0", "ssid": "RUT_XXXX", ".type": "wifi-iface"}]},
+            )
+        if request.url.path == "/api/wireless/interfaces/config/default_radio0":
+            seen["body"] = json.loads(request.content.decode())
+            return httpx.Response(200, json={"success": True})
+        if request.url.path == "/api/wireless/actions/reload":
+            return httpx.Response(200, json={"success": True})
+        return httpx.Response(404, json={"success": False})
+
+    transport = httpx.MockTransport(handler)
+    with RutosClient("192.168.100.1", "admin", "secret", transport=transport) as client:
+        changed = client.set_wireless_ssids("AQC Q1/1", "Enter@qua1!")
+    assert changed == 1
+    assert seen["body"] == {"data": {"ssid": "AQC Q1/1", "key": "Enter@qua1!"}}
+
+
 def test_backup_download_accepts_a_file_body():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/login":

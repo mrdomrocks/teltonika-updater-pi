@@ -238,8 +238,8 @@ class RutosClient:
         response = self.request("PUT", path, json=body)
         return self._json_or_error(response, f"PUT {path} failed")
 
-    def set_wireless_ssids(self, ssid: str) -> int:
-        """Rename every Wi-Fi interface. The config file has already been applied."""
+    def set_wireless_ssids(self, ssid: str, key: str) -> int:
+        """Rename every Wi-Fi interface and set its passphrase. The config file is already applied."""
         rows: list[dict] = []
         last: RutosError | None = None
         for path in ("/wireless/interfaces/config", "/wireless/interfaces"):
@@ -259,7 +259,7 @@ class RutosClient:
             if not iface_id:
                 continue
             saved = False
-            body = {"data": {"ssid": ssid}}
+            body = {"data": {"ssid": ssid, "key": key}}
             for path in (f"/wireless/interfaces/config/{iface_id}", f"/wireless/interfaces/{iface_id}"):
                 try:
                     self.put_json(path, body)

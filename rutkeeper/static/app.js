@@ -116,8 +116,9 @@
       }
       var login = document.getElementById("login-button");
       if (login) {
-        // Password optional: Sign in also tries Enter@qua1! after a partial install.
-        login.disabled = busy;
+        // Stays available during a reboot or new-address wait so a factory
+        // reset can be signed in with the label password. Uploads still block it.
+        login.disabled = data.phase === "busy";
       }
       var applyConfig = document.getElementById("config-button");
       if (applyConfig) {
@@ -125,7 +126,9 @@
       }
       var hint = document.getElementById("install-hint");
       if (hint && data.phase === "await-address") {
-        hint.textContent = "Waiting for the router on its new address. Answering there confirms the config was uploaded.";
+        hint.textContent = "Waiting for the new address. If the router was factory reset, it is back at 192.168.1.1 — press Sign in with the label password.";
+      } else if (hint && data.phase === "rebooting") {
+        hint.textContent = "Waiting for the router to reboot. After a factory reset, press Sign in and use the label password.";
       } else if (hint && signedIn && !data.error) {
         hint.textContent = "Signed in. Install runs the full job, or Apply config if firmware is already on this router.";
       } else if (hint && !busy && !data.error) {

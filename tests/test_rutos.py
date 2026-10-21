@@ -49,6 +49,80 @@ def test_firmware_upload_uses_the_local_file_endpoint():
     assert b"image-bytes" in seen["upload"]
 
 
+def test_login_accepts_the_factory_firmware_session():
+    """Pre-7.06 images accept the label password and return ubus_rpc_session, not token."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.scheme == "https"
+        body = request.read()
+        assert b'"data"' not in body
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "ubus_rpc_session": "factory-session",
+                "expires": 299,
+                "data": {"username": "admin"},
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    with RutosClient("192.168.1.1", "admin", "label-password", transport=transport) as client:
+        client.login()
+    assert client.token == "factory-session"
+    assert client.password_change_required is False
+
+
+def test_login_keeps_a_session_when_the_factory_password_must_be_changed():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            json={
+                "success": False,
+                "errors": [{"error": "Password change required"}],
+                "data": {"ubus_rpc_session": "temp-session"},
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    with RutosClient("192.168.1.1", "admin", "label-password", transport=transport) as client:
+        client.login()
+    assert client.token == "temp-session"
+    assert client.password_change_required is True
+
+
+def test_login_uses_http_when_https_does_not_connect():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.scheme == "https":
+            raise httpx.ConnectError("tls failed")
+        assert request.url.scheme == "http"
+        return httpx.Response(200, json={"success": True, "data": {"token": "from-http"}})
+
+    transport = httpx.MockTransport(handler)
+    with RutosClient("192.168.1.1", "admin", "label-password", transport=transport) as client:
+        client.login()
+    assert client.token == "from-http"
+    assert client.base == "http://192.168.1.1/api"
+
+
+def test_login_does_not_retry_http_when_the_password_is_refused():
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.scheme)
+        return httpx.Response(401, json={"success": False, "errors": [{"error": "Unauthorized"}]})
+
+    transport = httpx.MockTransport(handler)
+    with RutosClient("192.168.1.1", "admin", "wrong", transport=transport) as client:
+        try:
+            client.login()
+        except RutosError as exc:
+            assert exc.status == 401
+        else:
+            raise AssertionError("refused password should fail")
+    assert seen == ["https", "https"]
+
+
 def test_backup_download_accepts_a_file_body():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/login":

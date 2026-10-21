@@ -36,7 +36,10 @@ FIXED_ADMIN_PASSWORD = "Enter@qua1!"
 CABLE_HOST = "192.168.1.1"
 # LAN after the config file is applied — answer here confirms the upload.
 POST_CONFIG_HOST = "192.168.100.1"
+# A factory reset comes back on the cable address and stays there.
+CABLE_AFTER_CONFIG_SECONDS = 60
 _HOLD_PHASES = {"busy", "rebooting", "await-address"}
+_WAIT_PHASES = {"rebooting", "await-address"}
 
 
 class Busy(Exception):
@@ -117,6 +120,10 @@ class LiveRouter:
     def set_admin_password(self, current: str, new: str) -> str:
         return self.client.set_admin_password(current, new)
 
+    @property
+    def password_change_required(self) -> bool:
+        return bool(getattr(self.client, "password_change_required", False))
+
     def close(self) -> None:
         self.client.close()
 
@@ -130,8 +137,14 @@ class Bench:
         self.sim = SimRouter()
         self._ensure_folders()
         self._session_password = ""
+        # Label password for this job only. A factory reset puts it back, so
+        # reconnects after a reboot still try it. It is not written to disk.
+        self._factory_password = ""
         self._lock = threading.Lock()
         self._inflight = False
+        self._job_id = 0
+        self._job_thread: threading.Thread | None = None
+        self._cancel = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._was_http = False
@@ -210,30 +223,59 @@ class Bench:
         # even when the saved Address now is stale after an interrupted install.
         if action != "login":
             self._require_lan()
+        else:
+            self._release_wait()
         with self._lock:
             if self._inflight:
                 raise Busy(action)
+            self._job_id += 1
+            job_id = self._job_id
             self._inflight = True
+        self._cancel.clear()
         self._set(phase="busy", job=action, step="login", error="", detail="Signing in.")
         thread = threading.Thread(
             target=self._run_safe,
-            args=(action, typed_password, slot),
+            args=(action, typed_password, slot, job_id),
             name=f"rutkeeper-bench-{action}",
             daemon=True,
         )
+        self._job_thread = thread
         thread.start()
 
     def run_inline(self, action: str, typed_password: str, slot: str = "") -> None:
         if action != "login":
             self._require_lan()
+        else:
+            self._release_wait()
         with self._lock:
             if self._inflight:
                 raise Busy(action)
+            self._job_id += 1
+            job_id = self._job_id
             self._inflight = True
+        self._cancel.clear()
         self._set(phase="busy", job=action, step="login", error="", detail="Signing in.")
-        self._run_safe(action, typed_password, slot)
+        self._run_safe(action, typed_password, slot, job_id)
 
-    def _run_safe(self, action: str, typed_password: str, slot: str = "") -> None:
+    def _release_wait(self) -> None:
+        """Let Sign in interrupt a reboot or new-address wait.
+
+        A factory reset puts the router back on 192.168.1.1 with the label
+        password while the bench is still waiting for the previous address.
+        """
+        job = self._job_thread
+        phase = str(self.status.get("phase") or "")
+        if job is None or not job.is_alive() or phase not in _WAIT_PHASES:
+            return
+        self._cancel.set()
+        job.join(timeout=15)
+        if job.is_alive():
+            return
+        self._cancel.clear()
+
+    def _run_safe(self, action: str, typed_password: str, slot: str = "", job_id: int = 0) -> None:
+        if typed_password and typed_password != FIXED_ADMIN_PASSWORD:
+            self._factory_password = typed_password
         try:
             if action == "install":
                 self._install(typed_password, slot)
@@ -251,7 +293,13 @@ class Bench:
             self.db.add_event("error", "workbench", message)
         finally:
             with self._lock:
-                self._inflight = False
+                if self._job_id == job_id:
+                    self._inflight = False
+                    self._factory_password = ""
+
+    def _stopped(self) -> None:
+        if self._cancel.is_set():
+            raise RutosError("Stopped waiting. Sign in with the password on the router now.")
 
     def _install(self, typed_password: str, slot: str) -> None:
         if slot not in {"config1", "config2"}:
@@ -304,7 +352,17 @@ class Bench:
         self._set(step="login", detail="Signing in. Looking for the router on known addresses.")
         passwords = self._candidates(typed_password, FIXED_ADMIN_PASSWORD)
         router, password, host = self._connect_any(passwords)
-        router.close()
+        try:
+            if getattr(router, "password_change_required", False):
+                how = router.set_admin_password(password, FIXED_ADMIN_PASSWORD)
+                self.db.add_event(
+                    "info",
+                    "workbench",
+                    f"Admin password replaced ({how}). The previous password was not stored.",
+                )
+                password = FIXED_ADMIN_PASSWORD
+        finally:
+            router.close()
         self._session_password = password
         if host:
             current = _host_only(self.db.setting("bench_host") or CABLE_HOST)
@@ -331,7 +389,7 @@ class Bench:
         self._set(step="password", detail=f"Setting the admin password at {CABLE_HOST}.")
         router, used = self._connect(self._candidates(self._session_password), host=CABLE_HOST)
         try:
-            if used != FIXED_ADMIN_PASSWORD:
+            if used != FIXED_ADMIN_PASSWORD or getattr(router, "password_change_required", False):
                 how = router.set_admin_password(used, FIXED_ADMIN_PASSWORD)
                 self.db.add_event("info", "workbench", f"Admin password replaced ({how}). The previous password was not stored.")
             else:
@@ -411,7 +469,9 @@ class Bench:
             self.db.add_event("info", "workbench", f"Router answered at {nxt} after the config. Upload confirmed.")
             return
         deadline = time.monotonic() + 30 * 60
+        cable_since: float | None = None
         while time.monotonic() < deadline:
+            self._stopped()
             nxt = self._post_config_host()
             ping_ok, http_ok, rtt = probe(nxt)
             self._note_probe(ping_ok, http_ok, rtt)
@@ -420,8 +480,30 @@ class Bench:
                 self._set(detail=f"Router answered at {nxt}. Config upload confirmed.")
                 self.db.add_event("info", "workbench", f"Router answered at {nxt} after the config. Upload confirmed.")
                 return
+            if nxt != CABLE_HOST:
+                _cable_ping, cable_http, _cable_rtt = probe(CABLE_HOST)
+                if cable_http:
+                    now = time.monotonic()
+                    cable_since = now if cable_since is None else cable_since
+                    if now - cable_since >= CABLE_AFTER_CONFIG_SECONDS:
+                        raise RutosError(
+                            f"The router answered at {CABLE_HOST}, not at {nxt}. "
+                            "A factory reset puts it back on the cable address with the label password. "
+                            "Press Sign in."
+                        )
+                    self._set(
+                        detail=(
+                            f"Router answered at {CABLE_HOST}. Still waiting for {nxt}. "
+                            "Sign in with the label password if this unit was factory reset."
+                        )
+                    )
+                    if self._cancel.wait(3):
+                        self._stopped()
+                    continue
+            cable_since = None
             self._set(detail=f"Waiting for {nxt}. Answering there confirms the config was uploaded.")
-            time.sleep(3)
+            if self._cancel.wait(3):
+                self._stopped()
         raise RutosError(f"The router did not answer at {self._post_config_host()} within 30 minutes.")
 
     def _apply_config(self, slot: str, typed_password: str) -> None:
@@ -474,7 +556,7 @@ class Bench:
         self.db.add_event("info", "workbench", f"{label} applied and the admin password is set.")
 
     def _candidates(self, *extra: str) -> list[str]:
-        return _unique([*extra, self._session_password])
+        return _unique([*extra, self._session_password, self._factory_password])
 
     def _lookup_hosts(self) -> list[str]:
         """Addresses to try when finding a router after an interruption.
@@ -508,7 +590,24 @@ class Bench:
                 last = exc
                 client.close()
                 continue
-            return LiveRouter(client), password
+            router = LiveRouter(client)
+            if router.password_change_required and password != FIXED_ADMIN_PASSWORD:
+                try:
+                    how = router.set_admin_password(password, FIXED_ADMIN_PASSWORD)
+                    self.db.add_event(
+                        "info",
+                        "workbench",
+                        f"Admin password replaced ({how}). The previous password was not stored.",
+                    )
+                    client.password = FIXED_ADMIN_PASSWORD
+                    client.token = ""
+                    client.password_change_required = False
+                    client.login()
+                    password = FIXED_ADMIN_PASSWORD
+                except Exception:
+                    router.close()
+                    raise
+            return router, password
         raise last or RutosError("The router refused the password.")
 
     def _connect_any(self, passwords: list[str]):
@@ -522,7 +621,8 @@ class Bench:
             used = self.sim.accept(passwords)
             host = _host_only(self.db.setting("bench_host") or CABLE_HOST)
             return self.sim, used, host
-        last: RutosError | None = None
+        refused: RutosError | None = None
+        missed: RutosError | None = None
         tried: list[str] = []
         for host in self._lookup_hosts():
             tried.append(host)
@@ -530,11 +630,16 @@ class Bench:
             try:
                 router, password = self._connect(passwords, host=host)
             except RutosError as exc:
-                last = exc
+                # A later address that is simply down must not hide a real
+                # password refusal from the router that did answer.
+                if exc.status is None:
+                    missed = exc
+                else:
+                    refused = exc
                 continue
             return router, password, host
         where = ", ".join(tried) if tried else "the LAN"
-        raise last or RutosError(f"Could not sign in at {where}.")
+        raise refused or missed or RutosError(f"Could not sign in at {where}.")
 
     def _wait_until_back(self, host: str | None = None) -> None:
         """Ping/check one address until the router answers again after a reboot."""
@@ -548,6 +653,7 @@ class Bench:
         deadline = started + 8 * 60
         saw_down = False
         while time.monotonic() < deadline:
+            self._stopped()
             ping_ok, http_ok, rtt = probe(target)
             self._mark(
                 ping=ping_ok,
@@ -559,7 +665,8 @@ class Bench:
                 saw_down = True
             elif saw_down or time.monotonic() - started > 45:
                 return
-            time.sleep(3)
+            if self._cancel.wait(3):
+                self._stopped()
         raise RutosError(f"The router did not come back at {target} within 8 minutes.")
 
     def _watch(self) -> None:

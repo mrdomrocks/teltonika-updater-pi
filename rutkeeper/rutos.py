@@ -49,10 +49,49 @@ def _error_message(payload: object, fallback: str) -> str:
 
 
 def _token(payload: object) -> str:
+    """Session id from a RutOS login.
+
+    Current firmware returns data.token. Factory images from before the 7.06
+    API return ubus_rpc_session at the top of the same response, with the
+    password accepted and no token field.
+    """
     if not isinstance(payload, dict):
         return ""
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-    return str(data.get("token") or data.get("session") or payload.get("token") or "")
+    for source in (data, payload):
+        for key in ("token", "ubus_rpc_session", "session"):
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
+
+
+def _truthy(value: object) -> bool:
+    if value is True or value == 1:
+        return True
+    return isinstance(value, str) and value.strip().lower() in {"1", "true", "yes"}
+
+
+def _password_change_required(payload: object) -> bool:
+    """Factory-reset units accept the label password, then demand a new one."""
+    if not isinstance(payload, dict):
+        return False
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    for source in (data, payload):
+        if _truthy(source.get("password_required")) or _truthy(source.get("must_change")):
+            return True
+    text = _error_message(payload, "").lower()
+    return "password" in text and "chang" in text
+
+
+def _try_plain_http(exc: RutosError) -> bool:
+    """Retry over HTTP only when HTTPS never produced an authentication answer."""
+    if exc.status is None or exc.status in {301, 302, 303, 307, 308}:
+        return True
+    if exc.status != 200:
+        return False
+    text = str(exc).lower()
+    return not any(word in text for word in ("password", "unauthorized", "denied", "invalid"))
 
 
 class RutosClient:
@@ -70,6 +109,7 @@ class RutosClient:
         self.username = username or "admin"
         self.password = password
         self.token = ""
+        self.password_change_required = False
         self._client = httpx.Client(
             verify=verify_tls,
             timeout=timeout,
@@ -87,6 +127,16 @@ class RutosClient:
         self.close()
 
     def login(self) -> None:
+        self.password_change_required = False
+        try:
+            self._login_at(self.base)
+            return
+        except RutosError as exc:
+            if not self.base.startswith("https://") or not _try_plain_http(exc):
+                raise
+        self._login_at("http://" + self.base.removeprefix("https://"))
+
+    def _login_at(self, base: str) -> None:
         last: RutosError | None = None
         bodies = (
             {"username": self.username, "password": self.password},
@@ -94,7 +144,7 @@ class RutosClient:
         )
         for body in bodies:
             try:
-                response = self._client.post(f"{self.base}/login", json=body)
+                response = self._client.post(f"{base}/login", json=body)
             except httpx.HTTPError as exc:
                 raise RutosError(f"Could not reach the router: {exc.__class__.__name__}.") from exc
             payload: object
@@ -103,11 +153,17 @@ class RutosClient:
             except ValueError:
                 payload = {}
             token = _token(payload)
-            if response.status_code < 400 and token:
+            needs_change = _password_change_required(payload)
+            if token and (response.status_code < 400 or needs_change):
                 self.token = token
+                self.password_change_required = needs_change
+                self.base = base
                 return
+            fallback = f"Login failed ({response.status_code})."
+            if response.status_code < 400:
+                fallback = "The router answered but did not start a session."
             last = RutosError(
-                _error_message(payload, f"Login failed ({response.status_code})."),
+                _error_message(payload, fallback),
                 body=response.text[:2000],
                 status=response.status_code,
             )

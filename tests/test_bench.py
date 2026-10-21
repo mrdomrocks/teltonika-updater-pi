@@ -1,4 +1,5 @@
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -407,3 +408,58 @@ def test_probe_updates_address_when_router_answers_elsewhere(client, monkeypatch
     assert bench.db.setting("bench_host") == "192.168.1.1"
     assert bench.status["http"] is True
     assert "192.168.1.1" in str(bench.status["detail"])
+
+
+def test_reconnect_still_tries_the_label_password(client):
+    bench = client.app.state.bench
+    bench._factory_password = "from-the-label"
+    bench._session_password = FIXED_ADMIN_PASSWORD
+    assert bench._candidates(FIXED_ADMIN_PASSWORD) == [FIXED_ADMIN_PASSWORD, "from-the-label"]
+
+
+def test_new_address_wait_stops_when_the_factory_address_answers(client, monkeypatch):
+    monkeypatch.setattr("rutkeeper.bench.CABLE_AFTER_CONFIG_SECONDS", 0)
+    bench = client.app.state.bench
+    bench.db.set_settings({"bench_simulate": "0", "bench_next_host": "192.168.100.1"})
+
+    def fake_probe(host):
+        if host == "192.168.1.1":
+            return True, True, 1
+        return False, False, None
+
+    monkeypatch.setattr("rutkeeper.bench.probe", fake_probe)
+    try:
+        bench._await_new_address()
+    except Exception as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("the wait should stop")
+    assert "192.168.1.1" in message
+    assert "label password" in message
+
+
+def test_sign_in_can_stop_the_wait(client, monkeypatch):
+    bench = client.app.state.bench
+    bench.db.set_settings({"bench_simulate": "0", "bench_next_host": "192.168.100.1"})
+    monkeypatch.setattr("rutkeeper.bench.probe", lambda host: (False, False, None))
+    monkeypatch.setattr("rutkeeper.bench.CABLE_AFTER_CONFIG_SECONDS", 3600)
+    seen: list[str] = []
+
+    def runner():
+        try:
+            bench._await_new_address()
+        except Exception as exc:
+            seen.append(str(exc))
+
+    thread = threading.Thread(target=runner)
+    bench._job_thread = thread
+    thread.start()
+    for _ in range(50):
+        if bench.status.get("phase") == "await-address":
+            break
+        time.sleep(0.02)
+    bench._cancel.set()
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert seen
+    assert "Sign in" in seen[0]

@@ -13,7 +13,6 @@ Environment=RUTKEEPER_FILES=/boot/firmware
 Environment=RUTKEEPER_HOST=0.0.0.0
 Environment=RUTKEEPER_PORT=8741
 Environment=RUTKEEPER_TLS=1
-Environment=RUTKEEPER_TLS_PORT=8742
 Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=/opt/rutkeeper/.venv/bin/python -m rutkeeper
 Restart=on-failure

@@ -266,9 +266,7 @@
     if (scanButton) {
       scanButton.addEventListener("click", function () {
         if (!window.isSecureContext) {
-          var tlsMeta = document.querySelector('meta[name="tua-tls-port"]');
-          var tlsPort = (tlsMeta && tlsMeta.content) || "8742";
-          var httpsUrl = "https://" + window.location.hostname + ":" + tlsPort + window.location.pathname + window.location.search;
+          var httpsUrl = "https://" + window.location.host + window.location.pathname + window.location.search;
           setScanStatus("Live scanning needs HTTPS. Open " + httpsUrl + ", accept the certificate, then press Scan the label.", "bad");
           return;
         }

@@ -198,7 +198,10 @@ class Bench:
         self.db.set_settings({key: self.secrets.encrypt(password) if password else ""})
 
     def start_job(self, action: str, typed_password: str, slot: str = "") -> None:
-        self._require_lan()
+        # Manual sign-in can hunt for the router on cable or post-config addresses
+        # even when the saved Address now is stale after an interrupted install.
+        if action != "login":
+            self._require_lan()
         with self._lock:
             if self._inflight:
                 raise Busy(action)
@@ -213,7 +216,8 @@ class Bench:
         thread.start()
 
     def run_inline(self, action: str, typed_password: str, slot: str = "") -> None:
-        self._require_lan()
+        if action != "login":
+            self._require_lan()
         with self._lock:
             if self._inflight:
                 raise Busy(action)
@@ -225,6 +229,8 @@ class Bench:
         try:
             if action == "install":
                 self._install(typed_password, slot)
+            elif action == "login":
+                self._manual_sign_in(typed_password)
             elif action == "firmware":
                 self._flash(typed_password)
             elif action in {"config1", "config2"}:
@@ -259,6 +265,27 @@ class Bench:
         router.close()
         self._session_password = password
         self._set(step="ready", detail="Router answered.")
+
+    def _manual_sign_in(self, typed_password: str) -> None:
+        """Sign in without flashing — recover after an interrupted install.
+
+        Tries Address now, then the post-config address, then the usual cable
+        address. Updates Address now to wherever the router answers.
+        """
+        self._set(step="login", detail="Signing in. Looking for the router on known addresses.")
+        passwords = self._candidates(typed_password, FIXED_ADMIN_PASSWORD)
+        router, password, host = self._connect_any(passwords)
+        router.close()
+        self._session_password = password
+        if host:
+            current = _host_only(self.db.setting("bench_host") or "192.168.1.1")
+            if host != current:
+                self.db.set_settings({"bench_host": host})
+                self.db.add_event("info", "workbench", f"Signed in at {host}. Address now was updated.")
+            else:
+                self.db.add_event("info", "workbench", f"Signed in at {host}.")
+        self._mark(ping=True, http=True, rtt_ms=1, detail=f"Signed in at {host or 'the router'}. Ready to continue.")
+        self._set(phase="ready", job="", step="ready", error="", detail=f"Signed in at {host or 'the router'}. Ready to continue.")
 
     def _set_fixed_password(self) -> None:
         self._set(step="password", detail="Setting the admin password.")
@@ -390,7 +417,14 @@ class Bench:
     def _candidates(self, *extra: str) -> list[str]:
         return _unique([*extra, self._session_password])
 
-    def _connect(self, passwords: list[str]):
+    def _lookup_hosts(self) -> list[str]:
+        """Addresses to try when finding a router after an interruption."""
+        settings = self.db.settings()
+        host = _host_only(settings.get("bench_host") or "192.168.1.1")
+        nxt = _optional_host(settings.get("bench_next_host") or "") or "192.168.100.1"
+        return _unique([host, "192.168.1.1", nxt])
+
+    def _connect(self, passwords: list[str], host: str | None = None):
         passwords = _unique(passwords)
         if not passwords:
             raise RutosError(
@@ -400,11 +434,11 @@ class Bench:
             used = self.sim.accept(passwords)
             return self.sim, used
         settings = self.db.settings()
-        host = settings.get("bench_host") or "192.168.1.1"
+        target = _host_only(host or settings.get("bench_host") or "192.168.1.1")
         username = settings.get("bench_username") or "admin"
         last: RutosError | None = None
         for password in passwords:
-            client = RutosClient(host, username, password, verify_tls=False, timeout=40)
+            client = RutosClient(target, username, password, verify_tls=False, timeout=40)
             try:
                 client.login()
             except RutosError as exc:
@@ -413,6 +447,31 @@ class Bench:
                 continue
             return LiveRouter(client), password
         raise last or RutosError("The router refused the password.")
+
+    def _connect_any(self, passwords: list[str]):
+        """Try known LAN addresses until one accepts the password."""
+        passwords = _unique(passwords)
+        if not passwords:
+            raise RutosError(
+                "Type the password currently on this router. TUA needs it once to sign in, then replaces it."
+            )
+        if self.db.setting("bench_simulate") == "1":
+            used = self.sim.accept(passwords)
+            host = _host_only(self.db.setting("bench_host") or "192.168.1.1")
+            return self.sim, used, host
+        last: RutosError | None = None
+        tried: list[str] = []
+        for host in self._lookup_hosts():
+            tried.append(host)
+            self._set(detail=f"Signing in at {host}.")
+            try:
+                router, password = self._connect(passwords, host=host)
+            except RutosError as exc:
+                last = exc
+                continue
+            return router, password, host
+        where = ", ".join(tried) if tried else "the LAN"
+        raise last or RutosError(f"Could not sign in at {where}.")
 
     def _wait_until_back(self) -> None:
         if self.db.setting("bench_simulate") == "1":
@@ -461,13 +520,44 @@ class Bench:
             return
         host = _host_only(self.db.setting("bench_host") or "192.168.1.1")
         ping_ok, http_ok, rtt = probe(host)
+        detail = ""
+        if not http_ok:
+            # After a finished or interrupted job, Address now may still be the
+            # post-config IP while the next unit answers on the cable address.
+            for alt in self._lookup_hosts():
+                if alt == host:
+                    continue
+                alt_ping, alt_http, alt_rtt = probe(alt)
+                if alt_http:
+                    self.db.set_settings({"bench_host": alt})
+                    host = alt
+                    ping_ok, http_ok, rtt = alt_ping, alt_http, alt_rtt
+                    detail = f"Router answered at {alt}. Address now was updated."
+                    self.db.add_event("info", "workbench", detail)
+                    break
+                if alt_ping and not ping_ok:
+                    ping_ok, rtt = alt_ping, alt_rtt
+                    detail = f"Ping answered at {alt}. Waiting for the web interface."
         if http_ok:
-            detail = "Router is ready."
+            detail = detail or "Router is ready."
         elif ping_ok:
-            detail = "Ping answered. Waiting for the web interface."
+            detail = detail or "Ping answered. Waiting for the web interface."
         else:
             detail = "No answer yet. Plug the router into this Pi."
         self._mark(ping=ping_ok, http=http_ok, rtt_ms=rtt, detail=detail)
+
+    def _require_lan(self) -> None:
+        """Firmware, config, and password changes run only on a router that answers here."""
+        if self.db.setting("bench_simulate") == "1":
+            return
+        for host in self._lookup_hosts():
+            if lan_ready(host):
+                current = _host_only(self.db.setting("bench_host") or "192.168.1.1")
+                if host != current:
+                    self.db.set_settings({"bench_host": host})
+                    self.db.add_event("info", "workbench", f"Router answered at {host}. Address now was updated.")
+                return
+        raise RutosError("Plug the router into this Pi. Actions start only when it answers on the LAN.")
 
     def _mark(self, *, ping: bool, http: bool, rtt_ms: int | None, detail: str) -> None:
         with self._lock:
@@ -507,14 +597,6 @@ class Bench:
             delay = 0
         if delay > 0:
             time.sleep(min(delay, 3))
-
-    def _require_lan(self) -> None:
-        """Firmware, config, and password changes run only on a router that answers here."""
-        if self.db.setting("bench_simulate") == "1":
-            return
-        host = _host_only(self.db.setting("bench_host") or "192.168.1.1")
-        if not lan_ready(host):
-            raise RutosError("Plug the router into this Pi. Actions start only when it answers on the LAN.")
 
     def _ensure_folders(self) -> None:
         for name in FOLDERS.values():

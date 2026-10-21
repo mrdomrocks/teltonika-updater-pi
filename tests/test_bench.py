@@ -1,4 +1,5 @@
 import os
+import time
 from pathlib import Path
 
 from rutkeeper.bench import FIXED_ADMIN_PASSWORD
@@ -46,6 +47,9 @@ def test_bench_is_the_front_page(client):
     assert "Config 1" in page.text
     assert "Config 2" in page.text
     assert "Sign in" in page.text
+    assert 'id="login-button"' in page.text
+    assert 'id="config-button"' in page.text
+    assert "Apply config" in page.text
     assert "Set the admin password" in page.text
     assert "Confirm at the new address" in page.text
     assert "Address after config" in page.text
@@ -251,3 +255,99 @@ def test_flash_without_a_password_is_refused(client):
     assert client.app.state.bench.sim.firmware == ""
     messages = " ".join(event["message"] for event in client.app.state.db.events())
     assert "password" in messages.lower()
+
+
+def test_manual_sign_in_recovers_after_an_interrupted_install(client):
+    token = _csrf(client.get("/"))
+    client.post(
+        "/bench/setup",
+        data={
+            "csrf": token,
+            "host": "192.168.100.1",
+            "next_host": "192.168.100.1",
+            "username": "admin",
+            "simulate": "1",
+        },
+    )
+    bench = client.app.state.bench
+    bench.sim.admin_password = FIXED_ADMIN_PASSWORD
+    bench.run_inline("login", "")
+    assert bench.status["phase"] == "ready"
+    assert bench.status["http"] is True
+    assert bench._session_password == FIXED_ADMIN_PASSWORD
+    assert "Signed in" in str(bench.status["detail"])
+    messages = " ".join(event["message"] for event in client.app.state.db.events())
+    assert "Signed in" in messages
+
+
+def test_manual_sign_in_works_when_lan_probe_is_down(client, monkeypatch):
+    monkeypatch.setattr("rutkeeper.bench.lan_ready", lambda host: False)
+    token = _csrf(client.get("/"))
+    client.post(
+        "/bench/setup",
+        data={"csrf": token, "host": "192.168.1.1", "username": "admin", "simulate": "1"},
+    )
+    bench = client.app.state.bench
+    # Sign in skips the LAN gate so an interrupted unit can still be recovered.
+    bench.run_inline("login", "label-password")
+    assert bench.status["phase"] == "ready"
+    assert bench._session_password == "label-password"
+
+
+def test_apply_config_resumes_after_firmware(client):
+    token = _csrf(client.get("/"))
+    client.post(
+        "/bench/setup",
+        data={
+            "csrf": token,
+            "host": "192.168.1.1",
+            "username": "admin",
+            "simulate": "1",
+        },
+    )
+    _drop(client, "Config 1", "config-1.tar.gz", b"config-bytes")
+    bench = client.app.state.bench
+    bench.sim.admin_password = FIXED_ADMIN_PASSWORD
+    page = client.post(
+        "/bench/run",
+        data={
+            "csrf": token,
+            "action": "config",
+            "config": "config1",
+            "current_password": FIXED_ADMIN_PASSWORD,
+        },
+        follow_redirects=True,
+    )
+    assert page.status_code == 200
+    for _ in range(80):
+        if bench.status.get("step") == "done" and bench.sim.config:
+            break
+        time.sleep(0.05)
+    assert bench.sim.config == "config-1.tar.gz"
+    assert bench.db.setting("bench_host") == "192.168.100.1"
+    assert bench.status["step"] == "done"
+
+
+def test_probe_updates_address_when_router_answers_elsewhere(client, monkeypatch):
+    token = _csrf(client.get("/"))
+    client.post(
+        "/bench/setup",
+        data={
+            "csrf": token,
+            "host": "192.168.100.1",
+            "next_host": "192.168.100.1",
+            "username": "admin",
+        },
+    )
+    bench = client.app.state.bench
+
+    def fake_probe(host):
+        if host == "192.168.1.1":
+            return True, True, 2
+        return False, False, None
+
+    monkeypatch.setattr("rutkeeper.bench.probe", fake_probe)
+    bench._probe_once()
+    assert bench.db.setting("bench_host") == "192.168.1.1"
+    assert bench.status["http"] is True
+    assert "192.168.1.1" in str(bench.status["detail"])

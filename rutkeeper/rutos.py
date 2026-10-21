@@ -109,6 +109,12 @@ def _password_change_required(payload: object) -> bool:
     return "password" in text and "chang" in text
 
 
+def _lua_number_string_error(message: str) -> bool:
+    """RutOS 07.24 users.lua crashes once the current password is accepted."""
+    text = message.lower()
+    return "number expected" in text and "string" in text
+
+
 def _try_plain_http(exc: RutosError) -> bool:
     """Retry over HTTP only when HTTPS never produced an authentication answer."""
     if exc.status is None or exc.status in {301, 302, 303, 307, 308}:
@@ -387,8 +393,77 @@ class RutosClient:
             return f"users/{user_id}"
         except RutosError as exc:
             errors.append(str(exc))
+            if _lua_number_string_error(str(exc)):
+                try:
+                    self._set_password_ubus(current, new)
+                except RutosError as ubus_exc:
+                    if "07.25.1" in str(ubus_exc):
+                        raise
+                    raise RutosError(
+                        "This firmware cannot change the admin password. Put firmware 07.25.1 or newer in the Firmware folder."
+                    ) from ubus_exc
+                return "system"
         detail = errors[-1] if errors else "The router did not accept a password change."
         raise RutosError(detail)
+
+    def _origin(self) -> str:
+        if self.base.endswith("/api"):
+            return self.base[: -len("/api")]
+        return self.base
+
+    def _ubus_call(self, session: str, obj: str, method: str, params: dict) -> list:
+        try:
+            response = self._client.post(
+                f"{self._origin()}/ubus",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "call",
+                    "params": [session, obj, method, params],
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise RutosError(f"Could not reach the router: {exc.__class__.__name__}.") from exc
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise RutosError("The router did not accept the password change.") from exc
+        result = payload.get("result") if isinstance(payload, dict) else None
+        if not isinstance(result, list) or not result or result[0] != 0:
+            raise RutosError("The router did not accept the password change.")
+        return result
+
+    def _set_password_ubus(self, current: str, new: str) -> None:
+        """Set the password when users.lua rejects a string id. Firmware 07.25.1 fixed that."""
+        logged = self._ubus_call(
+            "00000000000000000000000000000000",
+            "session",
+            "login",
+            {"username": self.username, "password": current},
+        )
+        info = logged[1] if len(logged) > 1 and isinstance(logged[1], dict) else {}
+        session = info.get("ubus_rpc_session")
+        if not isinstance(session, str) or not session.strip():
+            raise RutosError("The router did not accept the password change.")
+        self._ubus_call(
+            session,
+            "rpc-sys",
+            "password_set",
+            {"user": self.username, "password": new},
+        )
+        saved = self.password
+        self.password = new
+        self.token = ""
+        try:
+            self.login()
+        except RutosError as exc:
+            self.password = saved
+            self.token = ""
+            raise RutosError(
+                "This firmware cannot change the admin password. Put firmware 07.25.1 or newer in the Firmware folder."
+            ) from exc
+        self.password = saved
+        self.token = ""
 
     def download_backup(self, kind: str = "device") -> tuple[bytes, str]:
         attempts: list[dict] = []

@@ -123,6 +123,59 @@ def test_login_does_not_retry_http_when_the_password_is_refused():
     assert seen == ["https", "https"]
 
 
+def test_password_change_uses_ubus_when_users_lua_rejects_a_string():
+    """Firmware 07.24 crashes PUT /users/config once the current password is right."""
+    import json
+
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/login":
+            body = json.loads(request.content.decode())
+            sent = body.get("password") or (body.get("data") or {}).get("password")
+            if sent == "Enter@qua1!":
+                return httpx.Response(200, json={"success": True, "data": {"token": "after"}})
+            return httpx.Response(200, json={"success": True, "data": {"token": "before"}})
+        if request.url.path == "/api/system/actions/change_password_firstlogin":
+            return httpx.Response(404, json={"success": False, "errors": [{"error": "missing"}]})
+        if request.url.path == "/api/users/config":
+            return httpx.Response(
+                200,
+                json={"success": True, "data": [{"id": "login1", "username": "admin", ".type": "login"}]},
+            )
+        if request.url.path == "/api/users/config/login1":
+            return httpx.Response(
+                200,
+                json={
+                    "success": False,
+                    "errors": [
+                        {
+                            "source": "Lua",
+                            "error": "/usr/lib/lua/api/system/users.lua: bad argument #2 to '?' (number expected, got string)",
+                        }
+                    ],
+                },
+            )
+        if request.url.path == "/ubus":
+            body = json.loads(request.content.decode())
+            params = body["params"]
+            seen.append({"obj": params[1], "method": params[2], "args": params[3]})
+            if params[2] == "login":
+                return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": [0, {"ubus_rpc_session": "ubus-1"}]})
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": [0, {}]})
+        return httpx.Response(404, json={"success": False})
+
+    transport = httpx.MockTransport(handler)
+    with RutosClient("192.168.100.1", "admin", "from-config", transport=transport) as client:
+        how = client.set_admin_password("from-config", "Enter@qua1!")
+    assert how == "system"
+    assert seen[0]["method"] == "login"
+    assert seen[0]["args"]["password"] == "from-config"
+    assert seen[1]["obj"] == "rpc-sys"
+    assert seen[1]["method"] == "password_set"
+    assert seen[1]["args"] == {"user": "admin", "password": "Enter@qua1!"}
+
+
 def test_backup_download_accepts_a_file_body():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/login":

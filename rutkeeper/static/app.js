@@ -48,7 +48,7 @@
       }
     };
 
-    var steps = ["login", "ready", "password", "firmware", "firmware-reboot", "new-address", "config"];
+    var steps = ["login", "ready", "password", "firmware", "firmware-reboot", "config", "new-address"];
     var last = null;
 
     var paint = function (data) {
@@ -111,14 +111,14 @@
       }
       var hint = document.getElementById("install-hint");
       if (hint && data.phase === "await-address") {
-        hint.textContent = "Enter the router’s new address and save. The config is applied when that address answers.";
+        hint.textContent = "Waiting for the router on its new address. Answering there confirms the config was uploaded.";
       } else if (hint && !busy && !data.error) {
         if (!data.firmware_ready) hint.textContent = "Put a firmware file in the Firmware folder.";
         else if (!data.config1_ready && !data.config2_ready) hint.textContent = "Put a config file in the Config 1 or Config 2 folder.";
         else if (!data.http) hint.textContent = "Waiting for the router to answer on the LAN.";
         else if (!typed) hint.textContent = "Type this router’s current password or scan its label, then pick a config.";
         else if (!configReady) hint.textContent = "Pick Config 1 or Config 2.";
-        else hint.textContent = "The router is on the LAN. Install signs in, sets the admin password, writes the firmware, then applies the config.";
+        else hint.textContent = "The router is on the LAN. Install signs in, sets the admin password, writes the firmware, applies the config on the same address, then confirms on the new address.";
       }
     };
 

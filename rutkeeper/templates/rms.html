@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}RMS{% endblock %}
+{% block body %}
+<header class="page-head">
+  <div>
+    <h1>RMS</h1>
+    <p class="lede">After the config is confirmed, TUA sets the Wi-Fi name to AQC Q1/ and the next number, then adds the router to RMS under that name.</p>
+  </div>
+</header>
+
+<section class="card">
+  <h2>Access token</h2>
+  <p>In RMS, create a personal access token with devices:read, devices:write, and device_credits:write. Save it from Notepad as one line in this file:</p>
+  <p class="mono">{{ token_path }}</p>
+  <p class="hint">{% if token_ready %}Token file found.{% else %}Token file is missing.{% endif %} The token is not shown here and is not saved in the database.</p>
+</section>
+
+<form class="card form section" method="post" action="/rms">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <h2>Company</h2>
+  <div class="fields">
+    <label>Company id
+      <input name="company_id" value="{{ company_id }}" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="From the RMS company">
+    </label>
+  </div>
+  <p class="hint">The number of the RMS company these routers join. The admin password sent to RMS is Enter@qua1!.</p>
+  <button class="btn primary" type="submit">Save</button>
+</form>
+
+<section class="card section">
+  <h2>Configured devices</h2>
+  <p class="hint mono">{{ log_path }}</p>
+  {% if not devices %}
+  <p>No routers have been named yet. The first one is AQC Q1/1.</p>
+  {% else %}
+  <div class="table-wrap">
+    <table class="log">
+      <thead>
+        <tr>
+          <th>Number</th>
+          <th>Name</th>
+          <th>Serial</th>
+          <th>MAC</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for device in devices %}
+        <tr>
+          <td data-label="Number">{{ device.number }}</td>
+          <td data-label="Name">{{ device.name }}</td>
+          <td data-label="Serial" class="mono">{{ device.serial }}</td>
+          <td data-label="MAC" class="mono">{{ device.mac }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

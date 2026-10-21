@@ -42,12 +42,17 @@ def parse_label(text: str) -> dict[str, str]:
                 fields[key] = value
         password = fields.get("PW") or ""
         if password:
-            return {"password": password, "username": fields.get("U") or ""}
+            return {
+                "password": password,
+                "username": fields.get("U") or "",
+                "serial": fields.get("SN") or "",
+                "mac": fields.get("M") or "",
+            }
         if fields:
             raise LabelError("no-password")
 
     if ";" not in raw and len(raw) <= 128:
-        return {"password": raw, "username": ""}
+        return {"password": raw, "username": "", "serial": "", "mac": ""}
     raise LabelError("unrecognized")
 
 

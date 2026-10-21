@@ -19,6 +19,15 @@ def _csrf(page) -> str:
     return page.text[start:end]
 
 
+def _arm_rms(client) -> tuple[str, str]:
+    bench = client.app.state.bench
+    api = bench.directory / "api"
+    api.mkdir(parents=True, exist_ok=True)
+    (api / "rms.txt").write_text("rms-test-token\n", encoding="utf-8")
+    bench.db.set_settings({"rms_company_id": "4242"})
+    return "1234567890", "AABBCCDDEEFF"
+
+
 def test_access_token_folder_is_not_created(client):
     root = client.app.state.bench.directory
     assert not (root / "Access Token").exists()
@@ -95,7 +104,8 @@ def test_config_replaces_the_router_password_with_the_shared_one(client):
     assert bench.sim.admin_password == "label-password"
 
     assert bench.db.setting("bench_host") == "192.168.1.1"
-    bench.run_inline("config1", "")
+    serial, mac = _arm_rms(client)
+    bench.run_inline("config1", "", serial=serial, mac=mac)
     assert bench.sim.config == "config-1.tar.gz"
     assert bench.sim.admin_password == FIXED_ADMIN_PASSWORD
     assert bench._session_password == ""
@@ -130,12 +140,15 @@ def test_install_writes_firmware_then_config_and_the_shared_password(client):
     bench.save_config_password("config1", "from-the-file")
     bench.db.set_settings({"bench_next_host": "10.20.30.40"})
     assert bench.db.setting("bench_host") == "192.168.1.1"
-    bench.run_inline("install", "label-password", "config1")
+    serial, mac = _arm_rms(client)
+    bench.run_inline("install", "label-password", "config1", serial, mac)
     assert bench.sim.actions == [
         ("password", FIXED_ADMIN_PASSWORD),
         ("firmware", FIXED_ADMIN_PASSWORD),
         ("config", FIXED_ADMIN_PASSWORD),
         ("password", FIXED_ADMIN_PASSWORD),
+        ("wireless", "AQC Q1/1"),
+        ("rms", "AQC Q1/1"),
     ]
     assert bench.sim.firmware == "RUT2_R_00.07.18.bin"
     assert bench.sim.config == "config-1.tar.gz"
@@ -154,6 +167,11 @@ def test_install_writes_firmware_then_config_and_the_shared_password(client):
     assert "Admin password replaced" in messages
     assert "Upload confirmed" in messages
     assert "label-password" not in messages
+    log = (Path(client.app.state.db.path).parent / "configured-devices.txt").read_text(encoding="utf-8")
+    assert "AQC Q1/1,1234567890,AA:BB:CC:DD:EE:FF" in log
+    assert FIXED_ADMIN_PASSWORD not in log
+    assert "rms-test-token" not in log
+    assert "rms-test-token" not in messages
 
 
 def test_install_confirms_config_on_default_next_host(client):
@@ -171,7 +189,8 @@ def test_install_confirms_config_on_default_next_host(client):
     _drop(client, "Config 1", "config-1.tar.gz", b"config-bytes")
     bench = client.app.state.bench
     assert bench.db.setting("bench_next_host") == "192.168.100.1"
-    bench.run_inline("install", "label-password", "config1")
+    serial, mac = _arm_rms(client)
+    bench.run_inline("install", "label-password", "config1", serial, mac)
     assert bench.sim.firmware == "RUT2_R_00.07.18.bin"
     assert bench.sim.config == "config-1.tar.gz"
     assert bench.db.setting("bench_host") == "192.168.100.1"
@@ -206,7 +225,8 @@ def test_install_resets_leftover_post_config_host_before_config(client):
         original_upload(filename, content)
 
     bench.sim.upload_backup = track_upload  # type: ignore[method-assign]
-    bench.run_inline("install", "label-password", "config1")
+    serial, mac = _arm_rms(client)
+    bench.run_inline("install", "label-password", "config1", serial, mac)
     assert hosts_during == ["192.168.1.1"]
     assert bench.sim.firmware == "RUT2_R_00.07.18.bin"
     assert bench.sim.config == "config-1.tar.gz"
@@ -348,6 +368,7 @@ def test_apply_config_resumes_after_firmware(client):
     _drop(client, "Config 1", "config-1.tar.gz", b"config-bytes")
     bench = client.app.state.bench
     bench.sim.admin_password = FIXED_ADMIN_PASSWORD
+    serial, mac = _arm_rms(client)
     page = client.post(
         "/bench/run",
         data={
@@ -355,6 +376,8 @@ def test_apply_config_resumes_after_firmware(client):
             "action": "config",
             "config": "config1",
             "current_password": FIXED_ADMIN_PASSWORD,
+            "device_serial": serial,
+            "device_mac": mac,
         },
         follow_redirects=True,
     )

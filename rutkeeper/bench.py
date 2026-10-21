@@ -24,6 +24,13 @@ from pathlib import Path
 
 from rutkeeper.crypto import SecretBox
 from rutkeeper.db import DB
+from rutkeeper.rms import (
+    add_rut,
+    format_mac,
+    name_for,
+    read_access_token,
+    remember_device,
+)
 from rutkeeper.rutos import RutosClient, RutosError, api_base
 
 FOLDERS = {
@@ -55,6 +62,8 @@ class SimRouter:
         self.config = ""
         self.password_changes: list[str] = []
         self.actions: list[tuple[str, str]] = []
+        self.wireless_name = ""
+        self.rms: list[dict[str, str]] = []
 
     def accept(self, passwords: list[str]) -> str:
         for password in _unique(passwords):
@@ -97,6 +106,15 @@ class SimRouter:
         self.actions.append(("password", new))
         return "simulated"
 
+    def set_wireless_name(self, ssid: str) -> int:
+        self.wireless_name = ssid
+        self.actions.append(("wireless", ssid))
+        return 1
+
+    def note_rms(self, name: str, serial: str, mac: str) -> None:
+        self.rms.append({"name": name, "serial": serial, "mac": mac})
+        self.actions.append(("rms", name))
+
     def close(self) -> None:
         return None
 
@@ -120,6 +138,9 @@ class LiveRouter:
     def set_admin_password(self, current: str, new: str) -> str:
         return self.client.set_admin_password(current, new)
 
+    def set_wireless_name(self, ssid: str) -> int:
+        return self.client.set_wireless_ssids(ssid)
+
     @property
     def password_change_required(self) -> bool:
         return bool(getattr(self.client, "password_change_required", False))
@@ -140,6 +161,8 @@ class Bench:
         # Label password for this job only. A factory reset puts it back, so
         # reconnects after a reboot still try it. It is not written to disk.
         self._factory_password = ""
+        self._label_serial = ""
+        self._label_mac = ""
         self._lock = threading.Lock()
         self._inflight = False
         self._job_id = 0
@@ -218,7 +241,14 @@ class Bench:
         key = "bench_config1_password_enc" if slot == "config1" else "bench_config2_password_enc"
         self.db.set_settings({key: self.secrets.encrypt(password) if password else ""})
 
-    def start_job(self, action: str, typed_password: str, slot: str = "") -> None:
+    def start_job(
+        self,
+        action: str,
+        typed_password: str,
+        slot: str = "",
+        serial: str = "",
+        mac: str = "",
+    ) -> None:
         # Manual sign-in can hunt for the router on cable or post-config addresses
         # even when the saved Address now is stale after an interrupted install.
         if action != "login":
@@ -235,14 +265,21 @@ class Bench:
         self._set(phase="busy", job=action, step="login", error="", detail="Signing in.")
         thread = threading.Thread(
             target=self._run_safe,
-            args=(action, typed_password, slot, job_id),
+            args=(action, typed_password, slot, job_id, serial, mac),
             name=f"rutkeeper-bench-{action}",
             daemon=True,
         )
         self._job_thread = thread
         thread.start()
 
-    def run_inline(self, action: str, typed_password: str, slot: str = "") -> None:
+    def run_inline(
+        self,
+        action: str,
+        typed_password: str,
+        slot: str = "",
+        serial: str = "",
+        mac: str = "",
+    ) -> None:
         if action != "login":
             self._require_lan()
         else:
@@ -255,7 +292,7 @@ class Bench:
             self._inflight = True
         self._cancel.clear()
         self._set(phase="busy", job=action, step="login", error="", detail="Signing in.")
-        self._run_safe(action, typed_password, slot, job_id)
+        self._run_safe(action, typed_password, slot, job_id, serial, mac)
 
     def _release_wait(self) -> None:
         """Let Sign in interrupt a reboot or new-address wait.
@@ -273,9 +310,21 @@ class Bench:
             return
         self._cancel.clear()
 
-    def _run_safe(self, action: str, typed_password: str, slot: str = "", job_id: int = 0) -> None:
+    def _run_safe(
+        self,
+        action: str,
+        typed_password: str,
+        slot: str = "",
+        job_id: int = 0,
+        serial: str = "",
+        mac: str = "",
+    ) -> None:
         if typed_password and typed_password != FIXED_ADMIN_PASSWORD:
             self._factory_password = typed_password
+        if serial.strip():
+            self._label_serial = serial.strip()
+        if mac.strip():
+            self._label_mac = mac.strip()
         try:
             if action == "install":
                 self._install(typed_password, slot)
@@ -296,6 +345,8 @@ class Bench:
                 if self._job_id == job_id:
                     self._inflight = False
                     self._factory_password = ""
+                    self._label_serial = ""
+                    self._label_mac = ""
 
     def _stopped(self) -> None:
         if self._cancel.is_set():
@@ -308,6 +359,7 @@ class Bench:
             raise RutosError(f"Put a config file in the {FOLDERS[slot]} folder.")
         if self.chosen("firmware") is None:
             raise RutosError("Put a firmware file in the Firmware folder.")
+        self._require_registration()
         # Factory units always start on the cable address until the config lands.
         self._pin_cable_address()
         self._sign_in(typed_password)
@@ -510,6 +562,7 @@ class Bench:
         path = self.chosen(slot)
         if path is None:
             raise RutosError(f"Put a config file in the {FOLDERS.get(slot, 'config')} folder.")
+        self._require_registration()
         target = FIXED_ADMIN_PASSWORD
         name = path.name
         content = path.read_bytes()
@@ -550,10 +603,71 @@ class Bench:
             router.close()
         confirm, _used = self._connect([target], host=nxt)
         confirm.close()
+        wifi_name = self._name_and_register(nxt, target)
         self._session_password = ""
         label = "Config 1" if slot == "config1" else "Config 2"
-        self._set(phase="ready", job="", step="done", error="", detail=f"{label} is on. The admin password is set.")
-        self.db.add_event("info", "workbench", f"{label} applied and the admin password is set.")
+        self._set(
+            phase="ready",
+            job="",
+            step="done",
+            error="",
+            detail=f"{label} is on. Wireless name is {wifi_name}. The router is in RMS.",
+        )
+        self.db.add_event("info", "workbench", f"{label} applied. Wireless name is {wifi_name}. The router is in RMS.")
+
+    def _device_log(self) -> Path:
+        return self.db.path.parent / "configured-devices.txt"
+
+    def _require_registration(self) -> None:
+        """Serial, MAC, token file, and company id are needed before the config is uploaded."""
+        if not self._label_serial.strip() or not self._label_mac.strip():
+            raise RutosError(
+                "Scan the router label before Install. RMS needs the serial number and MAC address from that code."
+            )
+        format_mac(self._label_mac)
+        read_access_token(self.directory)
+        company = (self.db.setting("rms_company_id") or "").strip()
+        if not company.isdigit():
+            raise RutosError("Set the RMS company id on the RMS page.")
+
+    def _name_and_register(self, host: str, password: str) -> str:
+        """Name the Wi-Fi from the device log, then add the unit to RMS."""
+        serial = self._label_serial.strip()
+        mac_raw = self._label_mac.strip()
+        if not serial or not mac_raw:
+            raise RutosError(
+                "Scan the router label before Install. RMS needs the serial number and MAC address from that code."
+            )
+        mac = format_mac(mac_raw)
+        token = read_access_token(self.directory)
+        company = (self.db.setting("rms_company_id") or "").strip()
+        if not company.isdigit():
+            raise RutosError("Set the RMS company id on the RMS page.")
+        log_path = self._device_log()
+        number, wifi_name, known = name_for(log_path, serial)
+        self._set(step="wireless", detail=f"Setting the wireless name to {wifi_name} at {host}.")
+        router, _used = self._connect([password], host=host)
+        try:
+            router.set_wireless_name(wifi_name)
+        finally:
+            router.close()
+        if not known:
+            remember_device(log_path, number, wifi_name, serial, mac)
+        self.db.add_event("info", "workbench", f"Wireless name set to {wifi_name}.")
+        self._set(step="rms", detail=f"Adding {wifi_name} to RMS.")
+        if self.db.setting("bench_simulate") == "1":
+            self.sim.note_rms(wifi_name, serial, mac)
+        else:
+            add_rut(
+                token=token,
+                company_id=company,
+                name=wifi_name,
+                password=password,
+                serial=serial,
+                mac=mac,
+            )
+        self.db.add_event("info", "workbench", f"{wifi_name} added to RMS.")
+        return wifi_name
 
     def _candidates(self, *extra: str) -> list[str]:
         return _unique([*extra, self._session_password, self._factory_password])
@@ -782,7 +896,7 @@ class Bench:
             time.sleep(min(delay, 3))
 
     def _ensure_folders(self) -> None:
-        for name in FOLDERS.values():
+        for name in (*FOLDERS.values(), "api"):
             try:
                 (self.directory / name).mkdir(parents=True, exist_ok=True)
             except OSError:

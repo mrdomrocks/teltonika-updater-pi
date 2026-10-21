@@ -88,11 +88,20 @@
         var value = unescapeValue(bits.slice(1).join(":")).trim();
         if (key) fields[key] = value;
       });
-      if (fields.PW) return { password: fields.PW, username: fields.U || "" };
+      if (fields.PW) {
+        return {
+          password: fields.PW,
+          username: fields.U || "",
+          serial: fields.SN || "",
+          mac: fields.M || ""
+        };
+      }
       if (Object.keys(fields).length) fail("no-password");
     }
 
-    if (raw.indexOf(";") === -1 && raw.length <= 128) return { password: raw, username: "" };
+    if (raw.indexOf(";") === -1 && raw.length <= 128) {
+      return { password: raw, username: "", serial: "", mac: "" };
+    }
     fail("unrecognized");
   }
 

@@ -35,6 +35,31 @@ def api_base(host: str) -> str:
     return text + "/api"
 
 
+def _wireless_rows(payload: object) -> list[dict]:
+    if not isinstance(payload, dict):
+        return []
+    data = payload.get("data")
+    if isinstance(data, list):
+        return [row for row in data if isinstance(row, dict)]
+    if isinstance(data, dict):
+        if data.get("id") or "ssid" in data:
+            return [data]
+        rows: list[dict] = []
+        for key, value in data.items():
+            if isinstance(value, dict):
+                value.setdefault("id", str(key))
+                rows.append(value)
+        return rows
+    return []
+
+
+def _wifi_iface(row: dict) -> bool:
+    kind = str(row.get(".type") or row.get("type") or "")
+    if kind == "wifi-device":
+        return False
+    return "ssid" in row or kind == "wifi-iface"
+
+
 def _error_message(payload: object, fallback: str) -> str:
     if isinstance(payload, dict):
         errors = payload.get("errors")
@@ -202,6 +227,50 @@ class RutosClient:
     def post_json(self, path: str, body: dict | None) -> dict:
         response = self.request("POST", path, json=body if body is not None else {})
         return self._json_or_error(response, f"POST {path} failed")
+
+    def put_json(self, path: str, body: dict) -> dict:
+        response = self.request("PUT", path, json=body)
+        return self._json_or_error(response, f"PUT {path} failed")
+
+    def set_wireless_ssids(self, ssid: str) -> int:
+        """Rename every Wi-Fi interface. The config file has already been applied."""
+        rows: list[dict] = []
+        last: RutosError | None = None
+        for path in ("/wireless/interfaces/config", "/wireless/interfaces"):
+            try:
+                rows = _wireless_rows(self.get_json(path))
+            except RutosError as exc:
+                last = exc
+                continue
+            if rows:
+                break
+        ifaces = [row for row in rows if _wifi_iface(row)]
+        if not ifaces:
+            raise last or RutosError("The router did not list a wireless name to change.")
+        changed = 0
+        for row in ifaces:
+            iface_id = str(row.get("id") or "").strip()
+            if not iface_id:
+                continue
+            saved = False
+            body = {"data": {"ssid": ssid}}
+            for path in (f"/wireless/interfaces/config/{iface_id}", f"/wireless/interfaces/{iface_id}"):
+                try:
+                    self.put_json(path, body)
+                    saved = True
+                    break
+                except RutosError as exc:
+                    last = exc
+            if not saved:
+                raise last or RutosError(f"The router did not accept the wireless name {ssid}.")
+            changed += 1
+        if not changed:
+            raise RutosError("The router did not list a wireless name to change.")
+        try:
+            self.post_json("/wireless/actions/reload", {})
+        except RutosError:
+            pass
+        return changed
 
     def _json_or_error(self, response: httpx.Response, fallback: str) -> dict:
         try:

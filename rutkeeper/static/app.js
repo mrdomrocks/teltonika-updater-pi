@@ -48,7 +48,7 @@
       }
     };
 
-    var steps = ["login", "ready", "password", "firmware", "firmware-reboot", "config", "new-address"];
+    var steps = ["login", "ready", "password", "firmware", "firmware-reboot", "config", "new-address", "wireless", "rms"];
     var last = null;
 
     var paint = function (data) {
@@ -186,8 +186,14 @@
       if (!passwordField || !parsed.password) return false;
       passwordField.value = parsed.password;
       passwordField.dispatchEvent(new Event("input", { bubbles: true }));
+      var serialField = document.getElementById("device-serial");
+      var macField = document.getElementById("device-mac");
+      if (serialField) serialField.value = parsed.serial || "";
+      if (macField) macField.value = parsed.mac || "";
       var username = document.querySelector('input[name="username"]');
       var note = "Password filled from the label.";
+      if (parsed.serial && parsed.mac) note = "Password, serial, and MAC filled from the label.";
+      else note += " This code has no serial number or MAC address. RMS needs a full label scan.";
       if (parsed.username && username && username.value !== parsed.username) {
         note += " Username on the label is " + parsed.username + ".";
       }

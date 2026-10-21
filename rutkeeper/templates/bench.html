@@ -28,6 +28,8 @@
     <li data-step="firmware-reboot">Wait for reboot</li>
     <li data-step="config">Apply the selected config</li>
     <li data-step="new-address">Confirm at the new address</li>
+    <li data-step="wireless">Set the wireless name</li>
+    <li data-step="rms">Add to RMS</li>
   </ol>
 </section>
 
@@ -39,6 +41,8 @@
       <label>Password on this router right now
         <input id="current-password" name="current_password" type="password" autocomplete="off" placeholder="Label or current admin password">
       </label>
+      <input type="hidden" id="device-serial" name="device_serial" value="">
+      <input type="hidden" id="device-mac" name="device_mac" value="">
       <button class="btn quiet scan-btn" type="button" id="scan-label">Scan the label</button>
     </div>
   </div>

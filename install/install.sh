@@ -32,8 +32,8 @@ if [[ -d /boot/firmware ]]; then
 else
   FILE_ROOT="$DATA"
 fi
-mkdir -p "$FILE_ROOT/Firmware" "$FILE_ROOT/Config 1" "$FILE_ROOT/Config 2"
-chmod 0775 "$FILE_ROOT/Firmware" "$FILE_ROOT/Config 1" "$FILE_ROOT/Config 2" || true
+mkdir -p "$FILE_ROOT/Firmware" "$FILE_ROOT/Config 1" "$FILE_ROOT/Config 2" "$FILE_ROOT/api"
+chmod 0775 "$FILE_ROOT/Firmware" "$FILE_ROOT/Config 1" "$FILE_ROOT/Config 2" "$FILE_ROOT/api" || true
 if [[ "$MODE" == "system" ]] && command -v systemctl >/dev/null 2>&1; then
   systemctl stop rutkeeper.service 2>/dev/null || true
 fi

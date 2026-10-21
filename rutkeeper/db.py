@@ -32,6 +32,7 @@ DEFAULTS = {
     "bench_config2_name": "",
     "bench_config1_password_enc": "",
     "bench_config2_password_enc": "",
+    "rms_company_id": "",
 }
 
 

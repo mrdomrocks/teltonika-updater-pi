@@ -83,10 +83,16 @@ def test_schedule_page_is_gone(client):
     assert "Schedule" not in client.get("/").text
 
 
-def test_rms_page_is_gone(client):
-    assert client.get("/rms").status_code == 404
+def test_rms_page_keeps_the_token_off_the_page(client):
+    root = client.app.state.bench.directory
+    (root / "api").mkdir(parents=True, exist_ok=True)
+    (root / "api" / "rms.txt").write_text("secret-token\n", encoding="utf-8")
+    page = client.get("/rms")
+    assert page.status_code == 200
+    assert "rms.txt" in page.text
+    assert "Token file found." in page.text
+    assert "secret-token" not in page.text
     home = client.get("/")
-    assert "RMS" not in home.text
-    assert 'href="/rms"' not in home.text
+    assert 'href="/rms"' in home.text
     log = client.get("/log")
-    assert "RMS" not in log.text
+    assert 'href="/rms"' in log.text

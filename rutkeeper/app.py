@@ -21,6 +21,7 @@ from rutkeeper.firmware import human_size
 from rutkeeper.rutos import RutosError
 from rutkeeper.bench import Bench, connect_host, files_root
 from rutkeeper.bench import Busy as BenchBusy
+from rutkeeper.rms import read_access_token, read_devices, token_path
 from rutkeeper.worker import Runner
 
 PACKAGE = Path(__file__).resolve().parent
@@ -175,12 +176,49 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         elif action not in {"login", "firmware", "config1", "config2"}:
             return redirect("/", "Choose sign in, firmware, or a config.")
         try:
-            bench.start_job(action, str(form.get("current_password") or ""), slot)
+            bench.start_job(
+                action,
+                str(form.get("current_password") or ""),
+                slot,
+                serial=str(form.get("device_serial") or ""),
+                mac=str(form.get("device_mac") or ""),
+            )
         except BenchBusy:
             return redirect("/", "The workbench is already working on this router.")
         except RutosError as exc:
             return redirect("/", str(exc))
         return redirect("/", "Job started.")
+
+    @app.get("/rms")
+    def rms_page(request: Request) -> HTMLResponse:
+        folder = files_root(data)
+        path = token_path(folder)
+        ready = False
+        try:
+            read_access_token(folder)
+            ready = True
+        except RutosError:
+            ready = False
+        log_path = data / "configured-devices.txt"
+        return render(
+            request,
+            "rms.html",
+            token_path=str(path),
+            token_ready=ready,
+            company_id=db.setting("rms_company_id"),
+            devices=read_devices(log_path),
+            log_path=str(log_path),
+        )
+
+    @app.post("/rms")
+    async def rms_save(request: Request):
+        form = await posted(request)
+        company = str(form.get("company_id") or "").strip()
+        if company and not company.isdigit():
+            return redirect("/rms", "The company id is the number from RMS.")
+        db.set_settings({"rms_company_id": company})
+        db.add_event("info", "rms", "RMS company id saved.")
+        return redirect("/rms", "RMS company id saved.")
 
     @app.post("/backups")
     async def upload_backup(request: Request):

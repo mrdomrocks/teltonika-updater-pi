@@ -15,11 +15,13 @@ SAMPLE = (
 )
 
 CASES = [
-    {"text": SAMPLE, "password": "device-secret", "username": "admin"},
+    {"text": SAMPLE, "password": "device-secret", "username": "admin", "serial": "1234567890", "mac": "AABBCCDDEEFF"},
     {
         "text": "WIFI:T:WPA;S:XX9999_9999;P:99999999;SN:9999999999;I:999999999999999; M:AABBCCDDEEFF;U:admin;PW:99999999;B:999;",
         "password": "99999999",
         "username": "admin",
+        "serial": "9999999999",
+        "mac": "AABBCCDDEEFF",
     },
     {"text": "U:root;PW:from-the-label", "password": "from-the-label", "username": "root"},
     {"text": "pw:lower-key", "password": "lower-key", "username": ""},
@@ -41,6 +43,8 @@ def test_label_parser(case):
     parsed = parse_label(case["text"])
     assert parsed["password"] == case["password"]
     assert parsed["username"] == case["username"]
+    assert parsed["serial"] == case.get("serial", "")
+    assert parsed["mac"] == case.get("mac", "")
     assert "wifi-secret" not in parsed["password"]
 
 
@@ -56,6 +60,10 @@ for (const item of cases) {
       process.exit(1);
     }
     if (got.password !== item.password || (got.username || "") !== (item.username || "")) {
+      console.error(JSON.stringify({ item: item, got: got }));
+      process.exit(1);
+    }
+    if ((got.serial || "") !== (item.serial || "") || (got.mac || "") !== (item.mac || "")) {
       console.error(JSON.stringify({ item: item, got: got }));
       process.exit(1);
     }

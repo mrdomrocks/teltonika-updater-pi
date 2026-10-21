@@ -83,6 +83,38 @@ def test_schedule_page_is_gone(client):
     assert "Schedule" not in client.get("/").text
 
 
+def test_rms_page_records_an_existing_device(client):
+    from pathlib import Path
+
+    page = client.get("/rms")
+    assert page.status_code == 200
+    assert "Record device" in page.text
+    assert "AQC Q1/1" in page.text
+    marker = 'name="csrf" value="'
+    token = page.text.split(marker, 1)[1].split('"', 1)[0]
+    saved = client.post(
+        "/rms/devices",
+        data={"csrf": token, "serial": "1234567890", "mac": "aa-bb-cc-dd-ee-ff"},
+        follow_redirects=False,
+    )
+    assert saved.status_code == 303
+    assert "AQC%20Q1/1" in saved.headers["location"] or "AQC Q1/1" in saved.headers["location"]
+    log = Path(client.app.state.db.path).parent / "configured-devices.txt"
+    text = log.read_text(encoding="utf-8")
+    assert "1,AQC Q1/1,1234567890,AA:BB:CC:DD:EE:FF" in text
+    again = client.post(
+        "/rms/devices",
+        data={"csrf": token, "serial": "1234567890", "mac": "AABBCCDDEEFF"},
+        follow_redirects=True,
+    )
+    assert "already in the configured devices log" in again.text
+    assert text.count("1234567890") == log.read_text(encoding="utf-8").count("1234567890")
+    shown = client.get("/rms")
+    assert "1234567890" in shown.text
+    assert "AA:BB:CC:DD:EE:FF" in shown.text
+    assert "AQC Q1/2" in shown.text
+
+
 def test_rms_page_keeps_the_token_off_the_page(client):
     root = client.app.state.bench.directory
     (root / "api").mkdir(parents=True, exist_ok=True)

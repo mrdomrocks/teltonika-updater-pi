@@ -57,4 +57,19 @@
   </div>
   {% endif %}
 </section>
+
+<form class="card form section" method="post" action="/rms/devices">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <h2>Already configured</h2>
+  <p class="hint">Record the serial and MAC from a router that already has a wireless name. TUA saves it as {{ next_name }} in the configured devices log, and the next install takes the following number.</p>
+  <div class="fields">
+    <label>Serial number
+      <input name="serial" autocomplete="off" spellcheck="false" required>
+    </label>
+    <label>MAC address
+      <input name="mac" autocomplete="off" spellcheck="false" placeholder="From the label" required>
+    </label>
+  </div>
+  <button class="btn primary" type="submit">Record device</button>
+</form>
 {% endblock %}

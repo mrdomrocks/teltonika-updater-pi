@@ -90,6 +90,7 @@ def test_rms_page_records_an_existing_device(client):
     assert page.status_code == 200
     assert "Record device" in page.text
     assert "AQC Q1/1" in page.text
+    assert "AQC Q2/1" in page.text
     marker = 'name="csrf" value="'
     token = page.text.split(marker, 1)[1].split('"', 1)[0]
     saved = client.post(
@@ -113,6 +114,15 @@ def test_rms_page_records_an_existing_device(client):
     assert "1234567890" in shown.text
     assert "AA:BB:CC:DD:EE:FF" in shown.text
     assert "AQC Q1/2" in shown.text
+    assert "AQC Q2/1" in shown.text
+    q2 = client.post(
+        "/rms/devices",
+        data={"csrf": token, "config": "config2", "serial": "9988776655", "mac": "AABBCCDDEE11"},
+        follow_redirects=True,
+    )
+    assert "AQC Q2/1" in q2.text
+    log_text = log.read_text(encoding="utf-8")
+    assert "1,AQC Q2/1,9988776655,AA:BB:CC:DD:EE:11" in log_text
 
 
 def test_rms_page_keeps_the_token_off_the_page(client):

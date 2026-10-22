@@ -2,7 +2,7 @@ import json
 
 import httpx
 
-from rutkeeper.rms import add_rut, format_mac, name_for, read_access_token, remember_device
+from rutkeeper.rms import add_rut, format_mac, name_for, prefix_for, read_access_token, remember_device
 from rutkeeper.rutos import RutosError
 
 
@@ -33,6 +33,15 @@ def test_next_name_increments_and_a_serial_keeps_its_number(tmp_path):
     remember_device(log, number, name, "222", "11:22:33:44:55:66")
     again, again_name, known = name_for(log, "111")
     assert (again, again_name, known) == (1, "AQC Q1/1", True)
+    q2_number, q2_name, q2_known = name_for(log, "333", prefix_for("config2"))
+    assert (q2_number, q2_name, q2_known) == (1, "AQC Q2/1", False)
+    remember_device(log, q2_number, q2_name, "333", "AA:BB:CC:DD:EE:01")
+    q2_again, q2_again_name, q2_again_known = name_for(log, "333", prefix_for("config2"))
+    assert (q2_again, q2_again_name, q2_again_known) == (1, "AQC Q2/1", True)
+    switched, switched_name, switched_known = name_for(log, "111", prefix_for("config2"))
+    assert (switched, switched_name, switched_known) == (2, "AQC Q2/2", False)
+    q1_next, q1_next_name, q1_known = name_for(log, "444", prefix_for("config1"))
+    assert (q1_next, q1_next_name, q1_known) == (3, "AQC Q1/3", False)
 
 
 def test_mac_is_grouped_for_rms():

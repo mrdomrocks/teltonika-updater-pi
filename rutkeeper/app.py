@@ -21,7 +21,7 @@ from rutkeeper.firmware import human_size
 from rutkeeper.rutos import RutosError
 from rutkeeper.bench import Bench, connect_host, files_root
 from rutkeeper.bench import Busy as BenchBusy
-from rutkeeper.rms import NAME_PREFIX, format_mac, name_for, read_access_token, read_devices, remember_device, token_path
+from rutkeeper.rms import format_mac, name_for, prefix_for, read_access_token, read_devices, remember_device, token_path
 from rutkeeper.worker import Runner
 
 PACKAGE = Path(__file__).resolve().parent
@@ -201,8 +201,8 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             ready = False
         log_path = data / "configured-devices.txt"
         devices = read_devices(log_path)
-        numbers = [int(row["number"]) for row in devices if str(row.get("number", "")).isdigit()]
-        next_number = 1 + max(numbers, default=0)
+        _number, next_q1, _known = name_for(log_path, "", prefix_for("config1"))
+        _number, next_q2, _known = name_for(log_path, "", prefix_for("config2"))
         return render(
             request,
             "rms.html",
@@ -211,7 +211,8 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             company_id=db.setting("rms_company_id"),
             devices=devices,
             log_path=str(log_path),
-            next_name=f"{NAME_PREFIX}{next_number}",
+            next_q1=next_q1,
+            next_q2=next_q2,
         )
 
     @app.post("/rms")
@@ -235,13 +236,17 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             mac = format_mac(str(form.get("mac") or ""))
         except RutosError as exc:
             return redirect("/rms", str(exc))
+        slot = str(form.get("config") or "config1").strip()
+        if slot not in {"config1", "config2"}:
+            return redirect("/rms", "Choose Config 1 or Config 2.")
         log_path = data / "configured-devices.txt"
-        number, wifi_name, known = name_for(log_path, serial)
+        prefix = prefix_for(slot)
+        number, wifi_name, known = name_for(log_path, serial, prefix)
         if known:
             return redirect("/rms", f"{wifi_name} is already in the configured devices log.")
         remember_device(log_path, number, wifi_name, serial, mac)
         db.add_event("info", "rms", f"Recorded {wifi_name} in the configured devices log.")
-        return redirect("/rms", f"Recorded {wifi_name}. The next router is {NAME_PREFIX}{number + 1}.")
+        return redirect("/rms", f"Recorded {wifi_name}. The next one for this config is {prefix}{number + 1}.")
 
     @app.post("/backups")
     async def upload_backup(request: Request):

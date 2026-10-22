@@ -1,7 +1,7 @@
 """Register one configured RUT with Teltonika RMS.
 
 The access token is a one-line Notepad file in the api folder next to Firmware.
-The device log lives in the data directory and supplies the next AQC Q1/ number.
+The device log lives in the data directory and supplies the next AQC Q1/ or AQC Q2/ number.
 """
 
 from __future__ import annotations
@@ -17,6 +17,11 @@ from rutkeeper.rutos import RutosError
 RMS_DEVICES_URL = "https://api.rms.teltonika-networks.com/devices"
 TOKEN_FILE = "rms.txt"
 NAME_PREFIX = "AQC Q1/"
+
+
+def prefix_for(slot: str) -> str:
+    """Config 1 is AQC Q1/. Config 2 is AQC Q2/."""
+    return "AQC Q2/" if slot == "config2" else NAME_PREFIX
 
 
 def token_path(directory: Path) -> Path:
@@ -74,16 +79,21 @@ def read_devices(path: Path) -> list[dict[str, str]]:
     return rows
 
 
-def name_for(path: Path, serial: str) -> tuple[int, str, bool]:
-    """Next AQC Q1/ number, or the name already given to this serial."""
+def name_for(path: Path, serial: str, prefix: str = NAME_PREFIX) -> tuple[int, str, bool]:
+    """Next number for this config, or the name already given to this serial under that prefix."""
     serial = (serial or "").strip()
+    prefix = prefix or NAME_PREFIX
     rows = read_devices(path)
     for row in rows:
-        if serial and row["serial"] == serial:
+        if serial and row["serial"] == serial and row["name"].startswith(prefix):
             return int(row["number"]), row["name"], True
-    numbers = [int(row["number"]) for row in rows]
+    numbers = [
+        int(row["number"])
+        for row in rows
+        if row["name"].startswith(prefix) and str(row["number"]).isdigit()
+    ]
     number = 1 + max(numbers, default=0)
-    return number, f"{NAME_PREFIX}{number}", False
+    return number, f"{prefix}{number}", False
 
 
 def remember_device(path: Path, number: int, name: str, serial: str, mac: str) -> None:

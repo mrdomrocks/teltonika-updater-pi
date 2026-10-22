@@ -4,7 +4,7 @@
 <header class="page-head">
   <div>
     <h1>RMS</h1>
-    <p class="lede">After the config is confirmed, TUA sets the Wi-Fi name to AQC Q1/ and the next number, then adds the router to RMS under that name.</p>
+    <p class="lede">After the config is confirmed, TUA sets the Wi-Fi name to AQC Q1/ for Config 1 or AQC Q2/ for Config 2, then adds the router to RMS under that name.</p>
   </div>
 </header>
 
@@ -31,7 +31,7 @@
   <h2>Configured devices</h2>
   <p class="hint mono">{{ log_path }}</p>
   {% if not devices %}
-  <p>No routers have been named yet. The first one is AQC Q1/1.</p>
+  <p>No routers have been named yet. Config 1 starts at AQC Q1/1. Config 2 starts at AQC Q2/1.</p>
   {% else %}
   <div class="table-wrap">
     <table class="log">
@@ -61,8 +61,14 @@
 <form class="card form section" method="post" action="/rms/devices">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <h2>Already configured</h2>
-  <p class="hint">Record the serial and MAC from a router that already has a wireless name. TUA saves it as {{ next_name }} in the configured devices log, and the next install takes the following number.</p>
+  <p class="hint">Record the serial and MAC from a router that already has a wireless name. Config 1 is saved as {{ next_q1 }}. Config 2 is saved as {{ next_q2 }}.</p>
   <div class="fields">
+    <label>Config
+      <select name="config">
+        <option value="config1">Config 1</option>
+        <option value="config2">Config 2</option>
+      </select>
+    </label>
     <label>Serial number
       <input name="serial" autocomplete="off" spellcheck="false" required>
     </label>

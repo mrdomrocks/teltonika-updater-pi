@@ -175,6 +175,28 @@ def test_install_writes_firmware_then_config_and_the_shared_password(client):
     assert "rms-test-token" not in messages
 
 
+def test_config2_uses_its_own_q2_name(client):
+    page = client.get("/")
+    client.post(
+        "/bench/setup",
+        data={
+            "csrf": _csrf(page),
+            "host": "192.168.1.1",
+            "username": "admin",
+            "simulate": "1",
+        },
+    )
+    _drop(client, "Firmware", "RUT2_R_00.07.18.bin", b"firmware-bytes")
+    _drop(client, "Config 2", "config-2.tar.gz", b"config-bytes")
+    bench = client.app.state.bench
+    serial, mac = _arm_rms(client)
+    bench.run_inline("install", "label-password", "config2", serial, mac)
+    assert ("wireless", "AQC Q2/1") in bench.sim.actions
+    assert ("rms", "AQC Q2/1") in bench.sim.actions
+    log = (Path(client.app.state.db.path).parent / "configured-devices.txt").read_text(encoding="utf-8")
+    assert "1,AQC Q2/1,1234567890,AA:BB:CC:DD:EE:FF" in log
+
+
 def test_install_confirms_config_on_default_next_host(client):
     token = _csrf(client.get("/"))
     client.post(

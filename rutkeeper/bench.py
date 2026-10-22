@@ -28,6 +28,7 @@ from rutkeeper.rms import (
     add_rut,
     format_mac,
     name_for,
+    prefix_for,
     read_access_token,
     remember_device,
 )
@@ -605,7 +606,7 @@ class Bench:
             router.close()
         confirm, _used = self._connect([target], host=nxt)
         confirm.close()
-        wifi_name = self._name_and_register(nxt, target)
+        wifi_name = self._name_and_register(nxt, target, slot)
         self._session_password = ""
         label = "Config 1" if slot == "config1" else "Config 2"
         self._set(
@@ -632,7 +633,7 @@ class Bench:
         if not company.isdigit():
             raise RutosError("Set the RMS company id on the RMS page.")
 
-    def _name_and_register(self, host: str, password: str) -> str:
+    def _name_and_register(self, host: str, password: str, slot: str) -> str:
         """Name the Wi-Fi from the device log, then add the unit to RMS."""
         serial = self._label_serial.strip()
         mac_raw = self._label_mac.strip()
@@ -646,7 +647,7 @@ class Bench:
         if not company.isdigit():
             raise RutosError("Set the RMS company id on the RMS page.")
         log_path = self._device_log()
-        number, wifi_name, known = name_for(log_path, serial)
+        number, wifi_name, known = name_for(log_path, serial, prefix_for(slot))
         self._set(step="wireless", detail=f"Setting the wireless name and password at {host}.")
         router, _used = self._connect([password], host=host)
         try:

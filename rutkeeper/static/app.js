@@ -50,6 +50,17 @@
 
     var steps = ["login", "ready", "password", "firmware", "firmware-reboot", "config", "new-address", "wireless", "rms"];
     var last = null;
+    var jobSawBusy = false;
+
+    var clearIdentity = function () {
+      var serialField = document.getElementById("device-serial");
+      var macField = document.getElementById("device-mac");
+      var password = document.querySelector('#bench-run input[name="current_password"]');
+      if (serialField) serialField.value = "";
+      if (macField) macField.value = "";
+      if (password) password.value = "";
+      setScanStatus("Scan the label for the next router.", "");
+    };
 
     var paint = function (data) {
       last = data;
@@ -85,6 +96,11 @@
       var index = steps.indexOf(current);
       var failed = Boolean(data.error);
       var signedIn = current === "signed-in";
+      if (busy) jobSawBusy = true;
+      if (!busy && jobSawBusy && (current === "done" || failed)) {
+        jobSawBusy = false;
+        clearIdentity();
+      }
       document.querySelectorAll("#install-steps li").forEach(function (item) {
         var mine = steps.indexOf(item.getAttribute("data-step"));
         item.classList.remove("done", "now", "fail");
@@ -348,7 +364,10 @@
             var form = document.getElementById("bench-run");
             var install = document.getElementById("install-button");
             var holding = data.phase === "busy" || data.phase === "rebooting" || data.phase === "await-address";
-            var startOnLan = form && form.getAttribute("data-start-on-lan") === "1" && install && !install.disabled && !holding;
+            var serialField = document.getElementById("device-serial");
+            var macField = document.getElementById("device-mac");
+            var identified = serialField && serialField.value.trim() && macField && macField.value.trim();
+            var startOnLan = form && form.getAttribute("data-start-on-lan") === "1" && install && !install.disabled && !holding && identified;
             if (startOnLan) {
               message += " Install started.";
             }

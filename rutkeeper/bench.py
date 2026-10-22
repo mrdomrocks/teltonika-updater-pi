@@ -648,15 +648,15 @@ class Bench:
         if not company.isdigit():
             raise RutosError("Set the RMS company id on the RMS page.")
         log_path = self._device_log()
-        number, wifi_name, known = name_for(log_path, serial, prefix_for(slot))
-        self._set(step="wireless", detail=f"Setting the wireless name and password at {host}.")
+        number, wifi_name, known = name_for(log_path, serial, prefix_for(slot), mac)
+        if not known:
+            remember_device(log_path, number, wifi_name, serial, mac)
+        self._set(step="wireless", detail=f"Setting the wireless name to {wifi_name}.")
         router, _used = self._connect([password], host=host)
         try:
             router.set_wireless_name(wifi_name, password)
         finally:
             router.close()
-        if not known:
-            remember_device(log_path, number, wifi_name, serial, mac)
         self.db.add_event("info", "workbench", f"Wireless name set to {wifi_name}.")
         source = internet_source()
         where = f" from {source}" if source else ""

@@ -54,6 +54,10 @@ def test_next_name_increments_and_a_serial_keeps_its_number(tmp_path):
     assert (switched, switched_name, switched_known) == (2, "AQC Q2/2", False)
     q1_next, q1_next_name, q1_known = name_for(log, "444", prefix_for("config1"))
     assert (q1_next, q1_next_name, q1_known) == (3, "AQC Q1/3", False)
+    other_mac, other_name, other_known = name_for(log, "111", prefix_for("config1"), "11:22:33:44:55:66")
+    assert (other_mac, other_name, other_known) == (3, "AQC Q1/3", False)
+    same_mac, same_name, same_known = name_for(log, "111", prefix_for("config1"), "aa:bb:cc:dd:ee:ff")
+    assert (same_mac, same_name, same_known) == (1, "AQC Q1/1", True)
 
 
 def test_add_rut_retries_a_connection_failure_then_sends():

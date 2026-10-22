@@ -6,6 +6,7 @@ The device log lives in the data directory and supplies the next AQC Q1/ or AQC 
 
 from __future__ import annotations
 
+import os
 import random
 import re
 import socket
@@ -235,18 +236,27 @@ def read_devices(path: Path) -> list[dict[str, str]]:
     return rows
 
 
-def name_for(path: Path, serial: str, prefix: str = NAME_PREFIX) -> tuple[int, str, bool]:
-    """Next number for this config, or the name already given to this serial under that prefix."""
+def _mac_key(value: str) -> str:
+    return re.sub(r"[^0-9A-Fa-f]", "", value or "").upper()
+
+
+def name_for(path: Path, serial: str, prefix: str = NAME_PREFIX, mac: str = "") -> tuple[int, str, bool]:
+    """Next number for this config, or the name already given to this serial and MAC."""
     serial = (serial or "").strip()
     prefix = prefix or NAME_PREFIX
+    mac_key = _mac_key(mac)
     rows = read_devices(path)
     for row in rows:
-        if serial and row["serial"] == serial and row["name"].startswith(prefix):
-            return int(row["number"]), row["name"], True
+        if not serial or row["serial"] != serial or not str(row["name"]).startswith(prefix):
+            continue
+        row_key = _mac_key(row["mac"])
+        if mac_key and row_key and mac_key != row_key:
+            continue
+        return int(row["number"]), row["name"], True
     numbers = [
         int(row["number"])
         for row in rows
-        if row["name"].startswith(prefix) and str(row["number"]).isdigit()
+        if str(row["name"]).startswith(prefix) and str(row["number"]).isdigit()
     ]
     number = 1 + max(numbers, default=0)
     return number, f"{prefix}{number}", False
@@ -260,6 +270,8 @@ def remember_device(path: Path, number: int, name: str, serial: str, mac: str) -
         if fresh:
             handle.write("number,name,serial,mac,added\n")
         handle.write(f"{number},{name},{serial},{mac},{stamp}\n")
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def add_rut(

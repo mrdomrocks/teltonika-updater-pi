@@ -7,6 +7,8 @@ The device log lives in the data directory and supplies the next AQC Q1/ or AQC 
 from __future__ import annotations
 
 import re
+import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -115,6 +117,9 @@ def add_rut(
     serial: str,
     mac: str,
     transport: httpx.BaseTransport | None = None,
+    attempts: int = 4,
+    pause: float = 5,
+    on_retry: Callable[[int, int], None] | None = None,
 ) -> None:
     """Add one RUT. password_confirmation is the admin password now on the router."""
     company = (company_id or "").strip()
@@ -133,18 +138,23 @@ def add_rut(
             }
         ]
     }
-    try:
-        with httpx.Client(timeout=40, transport=transport) as client:
-            response = client.post(
-                RMS_DEVICES_URL,
-                json=body,
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/json",
-                },
-            )
-    except httpx.HTTPError as exc:
-        raise RutosError(f"Could not reach RMS: {exc.__class__.__name__}.") from exc
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    timeout = httpx.Timeout(40.0, connect=10.0)
+    response: httpx.Response | None = None
+    with httpx.Client(timeout=timeout, transport=transport, trust_env=False) as client:
+        for attempt in range(1, attempts + 1):
+            try:
+                response = client.post(RMS_DEVICES_URL, json=body, headers=headers)
+                break
+            except httpx.HTTPError as exc:
+                if attempt == attempts:
+                    raise RutosError(_connection_message(exc)) from exc
+                if on_retry is not None:
+                    on_retry(attempt + 1, attempts)
+                if pause:
+                    time.sleep(pause)
+    if response is None:
+        raise RutosError("The Pi could not open a connection to RMS. It needs its own internet connection.")
     payload: object
     try:
         payload = response.json()
@@ -158,6 +168,24 @@ def add_rut(
         errors = data.get("errors") if isinstance(data, dict) else None
         if isinstance(errors, list) and errors:
             raise RutosError(_rms_error(payload, f"RMS refused {name}."))
+
+
+def _connection_message(exc: BaseException) -> str:
+    """Turn a failed TCP/TLS attempt into a bench message. The token is not included."""
+    cause = str(exc).strip()
+    lowered = cause.lower()
+    if any(word in lowered for word in ("certificate", "ssl", "tls", "cert")):
+        return "The Pi rejected the RMS certificate. Set the Pi clock, then run this again."
+    if any(word in lowered for word in ("name or service", "nodename", "name resolution", "no address associated")):
+        return "The Pi could not look up RMS. Its DNS or internet connection is down."
+    if any(word in lowered for word in ("network is unreachable", "no route", "host is unreachable")):
+        return (
+            "The Pi has no route to RMS. Give the Pi internet on a network other than the bench cable, "
+            "and do not let that cable replace the default gateway."
+        )
+    if not cause or lowered in {"connecterror", "networkerror", "connecttimeout"}:
+        cause = "the connection failed before RMS answered"
+    return f"The Pi could not open a connection to RMS ({cause}). It needs its own internet connection."
 
 
 def _rms_error(payload: object, fallback: str) -> str:

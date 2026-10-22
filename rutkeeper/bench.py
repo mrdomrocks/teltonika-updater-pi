@@ -657,18 +657,26 @@ class Bench:
         if not known:
             remember_device(log_path, number, wifi_name, serial, mac)
         self.db.add_event("info", "workbench", f"Wireless name set to {wifi_name}.")
-        self._set(step="rms", detail=f"Adding {wifi_name} to RMS.")
+        self._set(step="rms", detail=f"Adding {wifi_name} to RMS from this Pi.")
         if self.db.setting("bench_simulate") == "1":
             self.sim.note_rms(wifi_name, serial, mac)
         else:
-            add_rut(
-                token=token,
-                company_id=company,
-                name=wifi_name,
-                password=password,
-                serial=serial,
-                mac=mac,
-            )
+            try:
+                add_rut(
+                    token=token,
+                    company_id=company,
+                    name=wifi_name,
+                    password=password,
+                    serial=serial,
+                    mac=mac,
+                    on_retry=lambda nxt, total: self._set(
+                        detail=f"RMS did not answer. Trying again ({nxt} of {total})."
+                    ),
+                )
+            except RutosError as exc:
+                raise RutosError(
+                    f"{exc} {wifi_name} stays in the device log, so the next run keeps that name."
+                ) from exc
         self.db.add_event("info", "workbench", f"{wifi_name} added to RMS.")
         return wifi_name
 

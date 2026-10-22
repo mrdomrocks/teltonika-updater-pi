@@ -44,6 +44,55 @@ def test_next_name_increments_and_a_serial_keeps_its_number(tmp_path):
     assert (q1_next, q1_next_name, q1_known) == (3, "AQC Q1/3", False)
 
 
+def test_add_rut_retries_a_connection_failure_then_sends():
+    calls = {"n": 0}
+    retries: list[tuple[int, int]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.ConnectError("[Errno 101] Network is unreachable")
+        return httpx.Response(200, json={"success": True, "data": []})
+
+    add_rut(
+        token="rms-token",
+        company_id="4242",
+        name="AQC Q1/1",
+        password="Enter@qua1!",
+        serial="1234567890",
+        mac="aabbccddeeff",
+        transport=httpx.MockTransport(handler),
+        pause=0,
+        on_retry=lambda nxt, total: retries.append((nxt, total)),
+    )
+    assert calls["n"] == 2
+    assert retries == [(2, 4)]
+
+
+def test_add_rut_says_when_the_pi_has_no_route():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("[Errno 101] Network is unreachable")
+
+    try:
+        add_rut(
+            token="rms-token",
+            company_id="4242",
+            name="AQC Q1/1",
+            password="Enter@qua1!",
+            serial="1234567890",
+            mac="aabbccddeeff",
+            transport=httpx.MockTransport(handler),
+            attempts=2,
+            pause=0,
+        )
+    except RutosError as exc:
+        assert "ConnectError" not in str(exc)
+        assert "no route" in str(exc).lower()
+        assert "rms-token" not in str(exc)
+    else:
+        raise AssertionError("a dead connection should fail")
+
+
 def test_mac_is_grouped_for_rms():
     assert format_mac("aabbccddeeff") == "AA:BB:CC:DD:EE:FF"
     assert format_mac("AA-BB-CC-DD-EE-FF") == "AA:BB:CC:DD:EE:FF"

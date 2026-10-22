@@ -1,8 +1,20 @@
 import json
+import socket
+import struct
 
 import httpx
 
-from rutkeeper.rms import add_rut, format_mac, name_for, prefix_for, read_access_token, remember_device
+from rutkeeper.rms import (
+    _dns_a,
+    _dns_query,
+    add_rut,
+    format_mac,
+    hotspot_source,
+    name_for,
+    prefix_for,
+    read_access_token,
+    remember_device,
+)
 from rutkeeper.rutos import RutosError
 
 
@@ -91,6 +103,25 @@ def test_add_rut_says_when_the_pi_has_no_route():
         assert "rms-token" not in str(exc)
     else:
         raise AssertionError("a dead connection should fail")
+
+
+def test_hotspot_route_is_used_instead_of_the_bench_cable():
+    routes = "\n".join(
+        [
+            "Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT",
+            "eth0 00000000 0101A8C0 0003 0 0 100 00000000 0 0 0",
+            "wlan0 00000000 012BA8C0 0003 0 0 600 00000000 0 0 0",
+        ]
+    )
+    assert hotspot_source(routes, {"eth0": "192.168.1.50", "wlan0": "192.168.43.20"}) == "192.168.43.20"
+    assert hotspot_source(routes, {"eth0": "192.168.1.50"}) is None
+
+
+def test_dns_answer_yields_the_address():
+    query = _dns_query("api.rms.teltonika-networks.com")
+    answer = b"\xc0\x0c" + struct.pack(">HHIH", 1, 1, 60, 4) + socket.inet_aton("1.2.3.4")
+    packet = query[:6] + struct.pack(">H", 1) + query[8:] + answer
+    assert _dns_a(packet) == "1.2.3.4"
 
 
 def test_mac_is_grouped_for_rms():

@@ -27,6 +27,7 @@ from rutkeeper.db import DB
 from rutkeeper.rms import (
     add_rut,
     format_mac,
+    internet_source,
     name_for,
     prefix_for,
     read_access_token,
@@ -657,7 +658,9 @@ class Bench:
         if not known:
             remember_device(log_path, number, wifi_name, serial, mac)
         self.db.add_event("info", "workbench", f"Wireless name set to {wifi_name}.")
-        self._set(step="rms", detail=f"Adding {wifi_name} to RMS from this Pi.")
+        source = internet_source()
+        where = f" from {source}" if source else ""
+        self._set(step="rms", detail=f"Adding {wifi_name} to RMS{where}.")
         if self.db.setting("bench_simulate") == "1":
             self.sim.note_rms(wifi_name, serial, mac)
         else:

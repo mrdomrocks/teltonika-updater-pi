@@ -1,4 +1,4 @@
-"""SQLite store for routers, backups, the event log, settings, and dashboard accounts."""
+"""SQLite store for routers, backups, the event log, and settings."""
 
 from __future__ import annotations
 
@@ -104,25 +104,8 @@ class DB:
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY,
-                email TEXT NOT NULL UNIQUE,
-                name TEXT NOT NULL DEFAULT '',
-                password_hash TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS sessions (
-                token_hash TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                expires_at INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS login_failures (
-                email TEXT NOT NULL,
-                at INTEGER NOT NULL
-            );
             CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_backups_product ON backups(product_code);
-            CREATE INDEX IF NOT EXISTS idx_login_failures ON login_failures(email, at);
             """
         )
         for key, value in DEFAULTS.items():
@@ -372,89 +355,3 @@ class DB:
         with self._lock:
             row = self.conn.execute("SELECT 1 FROM devices WHERE busy = 1 LIMIT 1").fetchone()
         return row is not None
-
-    def users(self) -> list[dict[str, Any]]:
-        with self._lock:
-            rows = self.conn.execute(
-                "SELECT id, email, name, created_at FROM users ORDER BY email"
-            ).fetchall()
-        return [dict(row) for row in rows]
-
-    def user_count(self) -> int:
-        with self._lock:
-            return int(self.conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"])
-
-    def user_by_email(self, email: str) -> dict[str, Any] | None:
-        with self._lock:
-            row = self.conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-        return dict(row) if row else None
-
-    def add_user(self, email: str, name: str, password_hash: str) -> int:
-        with self._lock:
-            cur = self.conn.execute(
-                "INSERT INTO users (email, name, password_hash, created_at) VALUES (?, ?, ?, ?)",
-                (email, name, password_hash, utcnow()),
-            )
-            self.conn.commit()
-            return int(cur.lastrowid)
-
-    def set_password(self, user_id: int, password_hash: str) -> None:
-        with self._lock:
-            self.conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, user_id))
-            self.conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
-            self.conn.commit()
-
-    def delete_user(self, user_id: int) -> None:
-        with self._lock:
-            self.conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
-            self.conn.commit()
-
-    def add_session(self, token_hash: str, user_id: int, expires_at: int) -> None:
-        with self._lock:
-            self.conn.execute(
-                "INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
-                (token_hash, user_id, expires_at),
-            )
-            self.conn.commit()
-
-    def session_user(self, token_hash: str, now: int) -> dict[str, Any] | None:
-        with self._lock:
-            row = self.conn.execute(
-                """
-                SELECT u.id, u.email, u.name
-                FROM sessions s
-                JOIN users u ON u.id = s.user_id
-                WHERE s.token_hash = ? AND s.expires_at > ?
-                """,
-                (token_hash, now),
-            ).fetchone()
-        return dict(row) if row else None
-
-    def delete_session(self, token_hash: str) -> None:
-        with self._lock:
-            self.conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
-            self.conn.commit()
-
-    def purge_logins(self, now: int, failure_window: int) -> None:
-        with self._lock:
-            self.conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (now,))
-            self.conn.execute("DELETE FROM login_failures WHERE at <= ?", (now - failure_window,))
-            self.conn.commit()
-
-    def add_login_failure(self, email: str, now: int) -> None:
-        with self._lock:
-            self.conn.execute("INSERT INTO login_failures (email, at) VALUES (?, ?)", (email, now))
-            self.conn.commit()
-
-    def login_failures(self, email: str, since: int) -> int:
-        with self._lock:
-            row = self.conn.execute(
-                "SELECT COUNT(*) AS n FROM login_failures WHERE email = ? AND at > ?",
-                (email, since),
-            ).fetchone()
-        return int(row["n"])
-
-    def clear_login_failures(self, email: str) -> None:
-        with self._lock:
-            self.conn.execute("DELETE FROM login_failures WHERE email = ?", (email,))
-            self.conn.commit()

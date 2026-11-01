@@ -19,21 +19,12 @@
         <span class="brand-site">{{ site_name }}</span>
         {% endif %}
       </a>
-      {% if user %}
       <nav class="nav">
         <a href="/" {% if path == "/" %}aria-current="page"{% endif %}>Workbench</a>
         <a href="/rms" {% if path == "/rms" %}aria-current="page"{% endif %}>RMS</a>
         <a href="/log" {% if path == "/log" %}aria-current="page"{% endif %}>Log</a>
       </nav>
-      {% endif %}
       <p class="rail-version">{{ version }}</p>
-      {% if user %}
-      <form class="rail-account" method="post" action="/logout">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <span title="{{ user.email }}">{{ user.name or user.email }}</span>
-        <button class="rail-signout" type="submit">Sign out</button>
-      </form>
-      {% endif %}
     </header>
     <main class="main">
       {% if notice %}

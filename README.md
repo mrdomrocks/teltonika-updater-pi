@@ -46,11 +46,10 @@ TUA keeps that sequence on the Pi. It does not call RMS and it does not store an
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m rutkeeper user add --email you@example.com --name "Your name"
 .venv/bin/python -m rutkeeper
 ```
 
-Open http://127.0.0.1:8741 and sign in with that email and password.
+Open http://127.0.0.1:8741
 
 Set `RUTKEEPER_HOST`, `RUTKEEPER_PORT`, and `RUTKEEPER_DATA` to change the bind address, port, and data directory. Passwords are encrypted with a key created in that directory. Away from localhost, TUA serves HTTPS on port **8741** so the workbench and live label scanner share one address; plain `http://` on that port redirects to `https://`. Set `RUTKEEPER_TLS=0` for plain HTTP only.
 
@@ -70,22 +69,7 @@ A user install, without systemd, goes into `~/.local/rutkeeper`:
 ./install/install.sh --user
 ```
 
-## Sign in
-
-Every page needs an email and a password. There is no sign-up page. Accounts are made on the Pi's console, and the password is typed at a hidden prompt:
-
-```bash
-sudo tua-user add --email you@example.com --name "Your name"
-sudo tua-user passwd --email you@example.com
-sudo tua-user list
-sudo tua-user remove --email you@example.com
-```
-
-The installer offers to make the first account. `passwd` also signs that account out everywhere. A user install runs the same commands as `python -m rutkeeper user ...` with `RUTKEEPER_DATA` set.
-
-Passwords are stored as scrypt hashes. A sign-in lasts 12 hours. The session cookie is httpOnly and, when TUA serves HTTPS, marked Secure. Eight wrong passwords for one email lock that email for 15 minutes. Sign-ins and lockouts appear on the Log page.
-
-The login stops strangers, but the Pi still stores router admin passwords. Keep port 8741 on your management LAN where you can. If it has to be reachable from the internet, use a long password that is used nowhere else.
+Do not publish port 8741 to the internet. The Pi stores router admin passwords. Limit the port to your management LAN.
 
 To update a system install from GitHub:
 

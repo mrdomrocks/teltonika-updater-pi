@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -15,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from rutkeeper import __version__
+from rutkeeper import auth
 from rutkeeper.crypto import SecretBox
 from rutkeeper.db import DB
 from rutkeeper.firmware import human_size
@@ -55,7 +58,7 @@ def pretty_json(text: str) -> str:
         return text[:8000]
 
 
-def create_app(data_dir: Path | None = None) -> FastAPI:
+def create_app(data_dir: Path | None = None, secure_cookies: bool = False) -> FastAPI:
     data = Path(data_dir) if data_dir is not None else default_data_dir()
     data.mkdir(parents=True, exist_ok=True)
     (data / "backups").mkdir(parents=True, exist_ok=True)
@@ -101,6 +104,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             zone_label=now.tzname() or "local",
             now_epoch=int(now.timestamp() * 1000),
             path=request.url.path,
+            user=getattr(request.state, "user", None),
             **ctx,
         )
         return HTMLResponse(html, status_code=status)
@@ -124,7 +128,81 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         request.state.csrf = token
         response = await call_next(request)
         if request.cookies.get("csrf") != token:
-            response.set_cookie("csrf", token, httponly=True, samesite="lax", path="/")
+            response.set_cookie("csrf", token, httponly=True, samesite="lax", secure=secure_cookies, path="/")
+        return response
+
+    @app.middleware("http")
+    async def login_middleware(request: Request, call_next):
+        path = request.url.path
+        token = request.cookies.get(auth.SESSION_COOKIE)
+        user = db.session_user(auth.token_hash(token), int(time.time())) if token else None
+        request.state.user = user
+        if user or path == "/login" or path.startswith("/static/"):
+            return await call_next(request)
+        if "text/html" in request.headers.get("accept", ""):
+            target = "/login"
+            if request.method == "GET" and path != "/":
+                target += "?" + urlencode({"next": path})
+            return RedirectResponse(target, status_code=303)
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+
+    def login_page(request: Request, email: str = "", error: str = "", status: int = 200) -> HTMLResponse:
+        return render(
+            request,
+            "login.html",
+            status=status,
+            email=email,
+            error=error,
+            next=auth.safe_next(request.query_params.get("next")),
+            has_users=db.user_count() > 0,
+        )
+
+    @app.get("/login")
+    def login_form(request: Request):
+        if request.state.user:
+            return RedirectResponse(auth.safe_next(request.query_params.get("next")), status_code=303)
+        return login_page(request)
+
+    @app.post("/login")
+    async def login_submit(request: Request):
+        form = await posted(request)
+        typed = str(form.get("email") or "")
+        password = str(form.get("password") or "")
+        email = auth.normalize_email(typed) or typed.strip().lower()[:200]
+        now = int(time.time())
+        db.purge_logins(now, auth.LOCK_SECONDS)
+        if db.login_failures(email, now - auth.LOCK_SECONDS) >= auth.MAX_FAILURES:
+            db.add_event("warn", "login", f"Sign-in refused for {email}: too many wrong passwords.")
+            return login_page(request, email, "Too many wrong passwords. Wait 15 minutes and try again.", 429)
+        account = db.user_by_email(email)
+        if not auth.check_login(password, account["password_hash"] if account else None):
+            db.add_login_failure(email, now)
+            return login_page(request, email, "That email and password do not match.", 400)
+        db.clear_login_failures(email)
+        session = auth.new_token()
+        db.add_session(auth.token_hash(session), account["id"], now + auth.SESSION_SECONDS)
+        db.add_event("info", "login", f"{account['email']} signed in.")
+        response = RedirectResponse(auth.safe_next(str(form.get("next") or "")), status_code=303)
+        response.set_cookie(
+            auth.SESSION_COOKIE,
+            session,
+            max_age=auth.SESSION_SECONDS,
+            httponly=True,
+            samesite="lax",
+            secure=secure_cookies,
+            path="/",
+        )
+        response.delete_cookie("csrf", path="/")
+        return response
+
+    @app.post("/logout")
+    async def logout(request: Request) -> RedirectResponse:
+        await posted(request)
+        token = request.cookies.get(auth.SESSION_COOKIE)
+        if token:
+            db.delete_session(auth.token_hash(token))
+        response = RedirectResponse("/login", status_code=303)
+        response.delete_cookie(auth.SESSION_COOKIE, path="/")
         return response
 
     @app.get("/health")

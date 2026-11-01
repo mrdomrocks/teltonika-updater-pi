@@ -82,6 +82,17 @@ UMask=0077
 [Install]
 WantedBy=multi-user.target
 EOF
+  cat > /usr/local/bin/tua-user <<EOF
+#!/usr/bin/env bash
+# Manage TUA dashboard accounts: tua-user add|passwd|remove --email ADDRESS, or tua-user list
+set -euo pipefail
+if [[ "\$(id -u)" -ne 0 ]]; then
+  exec sudo "\$0" "\$@"
+fi
+cd "$PREFIX"
+exec runuser -u rutkeeper -- env RUTKEEPER_DATA="$DATA" "$PREFIX/.venv/bin/python" -m rutkeeper user "\$@"
+EOF
+  chmod 0755 /usr/local/bin/tua-user
   systemctl daemon-reload
   systemctl enable --now rutkeeper.service
   PI_IP="$(hostname -I | awk '{print $1}')"
@@ -89,11 +100,23 @@ EOF
   echo "TUA is running at https://${PI_IP}:8741"
   echo "Accept the self-signed certificate once. Workbench and live label scan use that same address."
   echo "Data directory: $DATA"
+  if [[ -t 0 ]] && ! /usr/local/bin/tua-user list | grep -q '@'; then
+    echo
+    echo "The dashboard needs an account before anyone can sign in."
+    read -r -p "Email for the first account (blank to skip): " FIRST_EMAIL
+    if [[ -n "$FIRST_EMAIL" ]]; then
+      read -r -p "Name to show (optional): " FIRST_NAME
+      /usr/local/bin/tua-user add --email "$FIRST_EMAIL" --name "$FIRST_NAME" || true
+    fi
+  fi
+  echo "Manage accounts with: sudo tua-user add --email you@example.com --name \"Your name\""
 else
   echo
   echo "Installed into $PREFIX"
   echo "Start it with:"
   echo "  RUTKEEPER_DATA=$DATA RUTKEEPER_HOST=0.0.0.0 RUTKEEPER_PORT=8741 RUTKEEPER_TLS=1 $PREFIX/.venv/bin/python -m rutkeeper"
+  echo "Add the first account with:"
+  echo "  RUTKEEPER_DATA=$DATA $PREFIX/.venv/bin/python -m rutkeeper user add --email you@example.com"
 fi
 
 echo "Keep this host off the public internet. It stores router admin passwords."

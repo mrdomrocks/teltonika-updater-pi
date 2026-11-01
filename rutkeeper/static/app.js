@@ -348,7 +348,13 @@
 
     var poll = function () {
       fetch("/bench/status", { headers: { Accept: "application/json" } })
-        .then(function (response) { return response.json(); })
+        .then(function (response) {
+          if (response.status === 401) {
+            window.location.href = "/login";
+            throw new Error("signed out");
+          }
+          return response.json();
+        })
         .then(function (data) {
           paint(data);
           var tick = String(data.ready_tick || 0);

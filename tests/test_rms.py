@@ -10,6 +10,8 @@ from rutkeeper.rms import (
     _dns_a,
     _dns_query,
     _hotspot_transport,
+    _link_prefixes,
+    ensure_source_route,
     add_rut,
     bench_route_preferred,
     format_mac,
@@ -161,14 +163,14 @@ def test_hotspot_pin_is_set_before_the_tcp_handshake(monkeypatch):
             events.append(("bind", address))
 
         def connect(self, address):
-            events.append("connect")
+            events.append(("connect", address))
 
         def close(self):
             events.append("close")
 
     monkeypatch.setattr(socket, "socket", FakeSocket)
     pin = (socket.IPPROTO_IP, IP_UNICAST_IF, b"\x03\x00\x00\x00")
-    transport = _hotspot_transport("10.175.19.87", [pin])
+    transport = _hotspot_transport("10.175.19.87", [pin], "1.2.3.4")
     try:
         transport._pool._network_backend.connect_tcp(
             "api.rms.teltonika-networks.com",
@@ -180,9 +182,42 @@ def test_hotspot_pin_is_set_before_the_tcp_handshake(monkeypatch):
     finally:
         transport.close()
     assert ("setsockopt", IP_UNICAST_IF) in events
-    assert events.index(("setsockopt", IP_UNICAST_IF)) < events.index("connect")
+    connect_at = events.index(("connect", ("1.2.3.4", 443)))
+    assert events.index(("setsockopt", IP_UNICAST_IF)) < connect_at
     assert ("bind", ("10.175.19.87", 0)) in events
-    assert events.index(("bind", ("10.175.19.87", 0))) < events.index("connect")
+    assert events.index(("bind", ("10.175.19.87", 0))) < connect_at
+
+
+class _IpResult:
+    def __init__(self, stdout: str = "", stderr: str = "", returncode: int = 0):
+        self.stdout = stdout
+        self.stderr = stderr
+        self.returncode = returncode
+
+
+def test_source_route_keeps_the_hotspot_lan_and_gateway():
+    calls = []
+
+    def runner(args, **kwargs):
+        calls.append(args)
+        if "show" in args:
+            return _IpResult("10.175.19.0/24 proto kernel scope link src 10.175.19.87\n")
+        return _IpResult()
+
+    ensure_source_route("10.175.19.87", "wlan0", "10.175.19.1", runner=runner)
+    assert ["route", "replace", "10.175.19.0/24", "dev", "wlan0", "scope", "link", "table", "18641"] == calls[1][1:]
+    assert calls[2][1:] == ["route", "replace", "default", "via", "10.175.19.1", "dev", "wlan0", "table", "18641"]
+    assert calls[4][1:] == ["rule", "add", "from", "10.175.19.87", "table", "18641", "priority", "100"]
+    assert _link_prefixes("10.175.19.0/24 proto kernel scope link\n") == ["10.175.19.0/24"]
+
+
+def test_source_route_refuses_the_bench_gateway():
+    try:
+        ensure_source_route("10.175.19.87", "wlan0", "192.168.100.1", runner=lambda *args, **kwargs: _IpResult())
+    except RutosError as exc:
+        assert "bench" in str(exc).lower()
+    else:
+        raise AssertionError("a bench gateway should be refused")
 
 
 def test_timeout_says_when_the_interface_was_not_pinned():

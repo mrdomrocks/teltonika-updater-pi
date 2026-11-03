@@ -72,7 +72,10 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=$PREFIX/.venv/bin/python -m rutkeeper
 Restart=on-failure
 RestartSec=3
-NoNewPrivileges=true
+# RMS installs a source route around the bench cable. NoNewPrivileges blocks that.
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=false
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true

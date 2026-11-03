@@ -11,6 +11,7 @@ import random
 import re
 import socket
 import struct
+import subprocess
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -30,6 +31,8 @@ NAME_PREFIX = "AQC Q1/"
 BENCH_GATEWAYS = {"192.168.1.1", "192.168.100.1"}
 # Outgoing interface for one socket. Unprivileged, unlike SO_BINDTODEVICE.
 IP_UNICAST_IF = 50
+# Policy table for the hotspot source. The bench cable can keep the main default route.
+SOURCE_ROUTE_TABLE = "18641"
 
 
 @dataclass(frozen=True)
@@ -239,6 +242,76 @@ def _lookup_ipv4(host: str, source: str | None, interface: str = "") -> str | No
     return None
 
 
+def _ip_program() -> str:
+    for path in ("/usr/sbin/ip", "/sbin/ip"):
+        if Path(path).is_file():
+            return path
+    return "ip"
+
+
+def _link_prefixes(route_text: str) -> list[str]:
+    prefixes: list[str] = []
+    for line in route_text.splitlines():
+        parts = line.split()
+        if parts and re.fullmatch(r"\d+\.\d+\.\d+\.\d+/\d+", parts[0]):
+            prefixes.append(parts[0])
+    return prefixes
+
+
+def _route_failure(stderr: str, stdout: str) -> str:
+    detail = (stderr or stdout).strip()
+    lowered = detail.lower()
+    if any(phrase in lowered for phrase in ("not permitted", "permission denied", "operation not permitted")):
+        return (
+            "The Pi service cannot steer RMS onto the hotspot. "
+            "Update TUA again so the service is allowed to set that route."
+        )
+    if detail:
+        return f"The Pi could not steer RMS onto the hotspot ({detail})."
+    return "The Pi could not steer RMS onto the hotspot."
+
+
+def ensure_source_route(
+    source: str,
+    interface: str,
+    gateway: str,
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> None:
+    """Send packets from the hotspot address through its own gateway.
+
+    Binding that address is not enough: the bench cable is often the preferred
+    default route, and the socket pin does not win against it.
+    """
+    if gateway in BENCH_GATEWAYS:
+        raise RutosError("The hotspot route points at the bench cable.")
+    if not re.fullmatch(r"\d+\.\d+\.\d+\.\d+", source) or not re.fullmatch(r"\d+\.\d+\.\d+\.\d+", gateway):
+        raise RutosError("The hotspot route is not an IPv4 address.")
+    if not re.fullmatch(r"[A-Za-z0-9._:-]+", interface):
+        raise RutosError("The hotspot interface name is not usable.")
+    ip = _ip_program()
+    run = runner or subprocess.run
+
+    def call(args: list[str]) -> subprocess.CompletedProcess[str]:
+        return run(args, check=False, capture_output=True, text=True, timeout=5)
+
+    shown = call([ip, "-4", "route", "show", "dev", interface, "scope", "link"])
+    if shown.returncode != 0:
+        raise RutosError(_route_failure(shown.stderr, shown.stdout))
+    for prefix in _link_prefixes(shown.stdout):
+        linked = call([ip, "route", "replace", prefix, "dev", interface, "scope", "link", "table", SOURCE_ROUTE_TABLE])
+        if linked.returncode != 0:
+            raise RutosError(_route_failure(linked.stderr, linked.stdout))
+    routed = call(
+        [ip, "route", "replace", "default", "via", gateway, "dev", interface, "table", SOURCE_ROUTE_TABLE]
+    )
+    if routed.returncode != 0:
+        raise RutosError(_route_failure(routed.stderr, routed.stdout))
+    call([ip, "rule", "del", "from", source, "table", SOURCE_ROUTE_TABLE])
+    added = call([ip, "rule", "add", "from", source, "table", SOURCE_ROUTE_TABLE, "priority", "100"])
+    if added.returncode != 0 and "file exists" not in (added.stderr or "").lower():
+        raise RutosError(_route_failure(added.stderr, added.stdout))
+
+
 def _open_tcp(
     host: str,
     port: int,
@@ -265,6 +338,7 @@ def _open_tcp(
 def _hotspot_transport(
     source: str | None,
     early_options: list[tuple[int, int, bytes]],
+    connect_host: str | None = None,
 ) -> httpx.BaseTransport:
     """HTTP transport whose TCP handshake leaves through the hotspot interface."""
     import httpcore
@@ -279,8 +353,9 @@ def _hotspot_transport(
             local_address: str | None = None,
             socket_options: list[tuple[int, int, int | bytes]] | None = None,
         ) -> SyncStream:
+            target = connect_host if connect_host and host == RMS_HOST else host
             try:
-                sock = _open_tcp(host, port, timeout, local_address, early_options)
+                sock = _open_tcp(target, port, timeout, local_address, early_options)
             except TimeoutError as exc:
                 raise httpcore.ConnectTimeout(str(exc) or "timed out") from exc
             except OSError as exc:
@@ -459,10 +534,11 @@ def add_rut(
         if found is not None:
             source = found.address
             interface = found.interface
+            ensure_source_route(found.address, found.interface, found.gateway)
         resolved = _lookup_ipv4(RMS_HOST, source, interface)
         options = interface_socket_options(interface)
         pinned = bool(options)
-        transport = _hotspot_transport(source, options)
+        transport = _hotspot_transport(source, options, resolved)
     response: httpx.Response | None = None
     with _pin_ipv4(RMS_HOST, resolved):
         with httpx.Client(timeout=timeout, transport=transport, trust_env=False) as client:

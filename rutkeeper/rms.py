@@ -14,6 +14,7 @@ import struct
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -27,6 +28,15 @@ TOKEN_FILE = "rms.txt"
 NAME_PREFIX = "AQC Q1/"
 # The bench cable's router. A default route via these gateways is not the hotspot.
 BENCH_GATEWAYS = {"192.168.1.1", "192.168.100.1"}
+# Outgoing interface for one socket. Unprivileged, unlike SO_BINDTODEVICE.
+IP_UNICAST_IF = 50
+
+
+@dataclass(frozen=True)
+class Hotspot:
+    address: str
+    interface: str
+    gateway: str
 
 
 def prefix_for(slot: str) -> str:
@@ -53,28 +63,89 @@ def default_routes(route_text: str) -> list[tuple[int, str, str]]:
     return rows
 
 
-def hotspot_source(route_text: str, addresses: dict[str, str]) -> str | None:
-    """IPv4 of a default route that is not the bench cable."""
+def hotspot_path(route_text: str, addresses: dict[str, str]) -> Hotspot | None:
+    """First default route that is not the bench cable."""
     for _metric, iface, gateway in default_routes(route_text):
         if gateway in BENCH_GATEWAYS:
             continue
         address = addresses.get(iface, "")
         if not address or address.startswith(("169.254.", "192.168.100.")):
             continue
-        return address
+        return Hotspot(address, iface, gateway)
     return None
 
 
-def internet_source() -> str | None:
-    """Hotspot address on this Pi, when the routing table lists one."""
+def hotspot_source(route_text: str, addresses: dict[str, str]) -> str | None:
+    """IPv4 of a default route that is not the bench cable."""
+    found = hotspot_path(route_text, addresses)
+    return found.address if found else None
+
+
+def bench_route_preferred(route_text: str) -> bool:
+    """True when a bench gateway wins, or ties, the default route."""
+    bench_metric: int | None = None
+    other_metric: int | None = None
+    for metric, _iface, gateway in default_routes(route_text):
+        if gateway in BENCH_GATEWAYS:
+            if bench_metric is None:
+                bench_metric = metric
+        elif other_metric is None:
+            other_metric = metric
+    if bench_metric is None or other_metric is None:
+        return False
+    return bench_metric <= other_metric
+
+
+def _route_table() -> str:
     try:
-        text = Path("/proc/net/route").read_text(encoding="utf-8")
+        return Path("/proc/net/route").read_text(encoding="utf-8")
     except OSError:
+        return ""
+
+
+def internet_path(route_text: str | None = None) -> Hotspot | None:
+    """Hotspot route on this Pi, when the routing table lists one."""
+    text = _route_table() if route_text is None else route_text
+    if not text:
         return None
     addresses: dict[str, str] = {}
     for _metric, iface, _gateway in default_routes(text):
         addresses.setdefault(iface, _iface_ipv4(iface))
-    return hotspot_source(text, addresses)
+    return hotspot_path(text, addresses)
+
+
+def internet_source() -> str | None:
+    """Hotspot address on this Pi, when the routing table lists one."""
+    found = internet_path()
+    return found.address if found else None
+
+
+def interface_socket_options(interface: str, ifindex: int | None = None) -> list[tuple[int, int, bytes]]:
+    """Pin a socket to one interface. A source address alone still follows the default route.
+
+    Set this before connect(). httpx applies its socket_options only after the
+    TCP handshake, and by then the kernel has already chosen the bench cable.
+    """
+    if not interface and ifindex is None:
+        return []
+    index = ifindex
+    if index is None:
+        if not hasattr(socket, "if_nametoindex"):
+            return []
+        try:
+            index = socket.if_nametoindex(interface)
+        except OSError:
+            return []
+    packed = struct.pack("I", socket.htonl(index))
+    if ifindex is None:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            probe.setsockopt(socket.IPPROTO_IP, IP_UNICAST_IF, packed)
+        except OSError:
+            return []
+        finally:
+            probe.close()
+    return [(socket.IPPROTO_IP, IP_UNICAST_IF, packed)]
 
 
 def _iface_ipv4(name: str) -> str:
@@ -130,13 +201,19 @@ def _dns_a(packet: bytes) -> str | None:
     return None
 
 
-def _lookup_ipv4(host: str, source: str | None) -> str | None:
+def _lookup_ipv4(host: str, source: str | None, interface: str = "") -> str | None:
     """Ask the hotspot path for an A record. The bench router is often the system DNS and has no WAN."""
     query = _dns_query(host)
+    pinned = interface_socket_options(interface)
     for server in ("1.1.1.1", "8.8.8.8"):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             sock.settimeout(2)
+            for option in pinned:
+                try:
+                    sock.setsockopt(*option)
+                except OSError:
+                    pass
             if source:
                 try:
                     sock.bind((source, 0))
@@ -160,6 +237,69 @@ def _lookup_ipv4(host: str, source: str | None) -> str | None:
         if address:
             return address
     return None
+
+
+def _open_tcp(
+    host: str,
+    port: int,
+    timeout: float | None,
+    local_address: str | None,
+    early_options: list[tuple[int, int, bytes]],
+) -> socket.socket:
+    """Connect an IPv4 socket after the interface pin is in place."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        for option in early_options:
+            sock.setsockopt(*option)
+        if timeout is not None:
+            sock.settimeout(timeout)
+        if local_address:
+            sock.bind((local_address, 0))
+        sock.connect((host, port))
+        return sock
+    except BaseException:
+        sock.close()
+        raise
+
+
+def _hotspot_transport(
+    source: str | None,
+    early_options: list[tuple[int, int, bytes]],
+) -> httpx.BaseTransport:
+    """HTTP transport whose TCP handshake leaves through the hotspot interface."""
+    import httpcore
+    from httpcore._backends.sync import SyncBackend, SyncStream
+
+    class _PinnedBackend(SyncBackend):
+        def connect_tcp(
+            self,
+            host: str,
+            port: int,
+            timeout: float | None = None,
+            local_address: str | None = None,
+            socket_options: list[tuple[int, int, int | bytes]] | None = None,
+        ) -> SyncStream:
+            try:
+                sock = _open_tcp(host, port, timeout, local_address, early_options)
+            except TimeoutError as exc:
+                raise httpcore.ConnectTimeout(str(exc) or "timed out") from exc
+            except OSError as exc:
+                raise httpcore.ConnectError(str(exc) or "connect failed") from exc
+            try:
+                for option in socket_options or []:
+                    sock.setsockopt(*option)
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except BaseException:
+                sock.close()
+                raise
+            return SyncStream(sock)
+
+    transport = httpx.HTTPTransport(local_address=source or "0.0.0.0")
+    pool = getattr(transport, "_pool", None)
+    if pool is None or not hasattr(pool, "_network_backend"):
+        raise RutosError("The HTTP library on this Pi cannot pin RMS to the hotspot.")
+    pool._network_backend = _PinnedBackend()
+    return transport
 
 
 @contextmanager
@@ -307,11 +447,22 @@ def add_rut(
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     timeout = httpx.Timeout(40.0, connect=10.0)
     source = None
+    interface = ""
+    bench_wins = False
     resolved = None
+    options: list[tuple[int, int, bytes]] = []
+    pinned = True
     if transport is None:
-        source = internet_source()
-        resolved = _lookup_ipv4(RMS_HOST, source)
-        transport = httpx.HTTPTransport(local_address=source or "0.0.0.0")
+        routes = _route_table()
+        bench_wins = bench_route_preferred(routes)
+        found = internet_path(routes)
+        if found is not None:
+            source = found.address
+            interface = found.interface
+        resolved = _lookup_ipv4(RMS_HOST, source, interface)
+        options = interface_socket_options(interface)
+        pinned = bool(options)
+        transport = _hotspot_transport(source, options)
     response: httpx.Response | None = None
     with _pin_ipv4(RMS_HOST, resolved):
         with httpx.Client(timeout=timeout, transport=transport, trust_env=False) as client:
@@ -321,13 +472,23 @@ def add_rut(
                     break
                 except httpx.HTTPError as exc:
                     if attempt == attempts:
-                        raise RutosError(_connection_message(exc, source)) from exc
+                        raise RutosError(
+                            _connection_message(exc, source, interface, bench_wins, pinned=pinned)
+                        ) from exc
                     if on_retry is not None:
                         on_retry(attempt + 1, attempts)
                     if pause:
                         time.sleep(pause)
     if response is None:
-        raise RutosError(_connection_message(OSError("the connection failed before RMS answered"), source))
+        raise RutosError(
+            _connection_message(
+                OSError("the connection failed before RMS answered"),
+                source,
+                interface,
+                bench_wins,
+                pinned=pinned,
+            )
+        )
     payload: object
     try:
         payload = response.json()
@@ -343,24 +504,38 @@ def add_rut(
             raise RutosError(_rms_error(payload, f"RMS refused {name}."))
 
 
-def _connection_message(exc: BaseException, source: str | None = None) -> str:
+def _connection_message(
+    exc: BaseException,
+    source: str | None = None,
+    interface: str = "",
+    bench_preferred: bool = False,
+    pinned: bool = True,
+) -> str:
     """Turn a failed TCP/TLS attempt into a bench message. The token is not included."""
     cause = str(exc).strip()
     lowered = cause.lower()
-    via = f" Tried from the hotspot address {source}." if source else ""
+    via = ""
+    if source:
+        via = f" Tried from the hotspot address {source}"
+        if interface:
+            via += f" on {interface}"
+        via += "."
+    bench = " The bench cable is the preferred default route." if bench_preferred else ""
+    pin = " The hotspot interface was not pinned." if interface and not pinned else ""
     if any(word in lowered for word in ("certificate", "ssl", "tls", "cert")):
-        return f"The Pi rejected the RMS certificate. Set the Pi clock, then run this again.{via}"
+        return f"The Pi rejected the RMS certificate. Set the Pi clock, then run this again.{via}{pin}"
     if any(word in lowered for word in ("name or service", "nodename", "name resolution", "no address associated")):
-        return f"The Pi could not look up RMS through the hotspot.{via}"
+        return f"The Pi could not look up RMS through the hotspot.{via}{bench}{pin}"
     if any(word in lowered for word in ("network is unreachable", "no route", "host is unreachable")):
         return (
             "The Pi has no route to RMS from the hotspot. "
             "The bench cable is taking the default route."
             + via
+            + pin
         )
     if not cause or lowered in {"connecterror", "networkerror", "connecttimeout"}:
         cause = "the connection failed before RMS answered"
-    return f"The Pi could not open a connection to RMS ({cause}).{via}"
+    return f"The Pi could not open a connection to RMS ({cause}).{via}{bench}{pin}"
 
 
 def _rms_error(payload: object, fallback: str) -> str:

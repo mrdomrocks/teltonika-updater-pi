@@ -5,11 +5,16 @@ import struct
 import httpx
 
 from rutkeeper.rms import (
+    IP_UNICAST_IF,
+    _connection_message,
     _dns_a,
     _dns_query,
+    _hotspot_transport,
     add_rut,
+    bench_route_preferred,
     format_mac,
     hotspot_source,
+    interface_socket_options,
     name_for,
     prefix_for,
     read_access_token,
@@ -119,6 +124,89 @@ def test_hotspot_route_is_used_instead_of_the_bench_cable():
     )
     assert hotspot_source(routes, {"eth0": "192.168.1.50", "wlan0": "192.168.43.20"}) == "192.168.43.20"
     assert hotspot_source(routes, {"eth0": "192.168.1.50"}) is None
+    assert bench_route_preferred(routes) is True
+    office_first = "\n".join(
+        [
+            "Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT",
+            "wlan0 00000000 012BA8C0 0003 0 0 50 00000000 0 0 0",
+            "eth0 00000000 0101A8C0 0003 0 0 600 00000000 0 0 0",
+        ]
+    )
+    assert bench_route_preferred(office_first) is False
+
+
+def test_interface_pin_uses_the_index_in_network_order():
+    options = interface_socket_options("wlan0", ifindex=3)
+    assert options == [(socket.IPPROTO_IP, 50, struct.pack("I", socket.htonl(3)))]
+
+
+def test_missing_interface_is_not_pinned():
+    assert interface_socket_options("not-a-real-iface-xyz") == []
+
+
+def test_hotspot_pin_is_set_before_the_tcp_handshake(monkeypatch):
+    events = []
+
+    class FakeSocket:
+        def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+            events.append("socket")
+
+        def setsockopt(self, level, opt, value):
+            events.append(("setsockopt", opt))
+
+        def settimeout(self, timeout):
+            events.append("settimeout")
+
+        def bind(self, address):
+            events.append(("bind", address))
+
+        def connect(self, address):
+            events.append("connect")
+
+        def close(self):
+            events.append("close")
+
+    monkeypatch.setattr(socket, "socket", FakeSocket)
+    pin = (socket.IPPROTO_IP, IP_UNICAST_IF, b"\x03\x00\x00\x00")
+    transport = _hotspot_transport("10.175.19.87", [pin])
+    try:
+        transport._pool._network_backend.connect_tcp(
+            "api.rms.teltonika-networks.com",
+            443,
+            timeout=5,
+            local_address="10.175.19.87",
+            socket_options=None,
+        )
+    finally:
+        transport.close()
+    assert ("setsockopt", IP_UNICAST_IF) in events
+    assert events.index(("setsockopt", IP_UNICAST_IF)) < events.index("connect")
+    assert ("bind", ("10.175.19.87", 0)) in events
+    assert events.index(("bind", ("10.175.19.87", 0))) < events.index("connect")
+
+
+def test_timeout_says_when_the_interface_was_not_pinned():
+    message = _connection_message(
+        TimeoutError("timed out"),
+        "10.175.19.87",
+        interface="wlan0",
+        bench_preferred=True,
+        pinned=False,
+    )
+    assert "not pinned" in message
+
+
+def test_timeout_names_the_bench_route_when_it_wins():
+    message = _connection_message(
+        TimeoutError("timed out"),
+        "10.175.19.87",
+        interface="wlan0",
+        bench_preferred=True,
+    )
+    assert "timed out" in message
+    assert "10.175.19.87" in message
+    assert "wlan0" in message
+    assert "bench cable" in message.lower()
 
 
 def test_dns_answer_yields_the_address():
